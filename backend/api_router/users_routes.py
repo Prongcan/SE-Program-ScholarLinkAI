@@ -38,6 +38,11 @@ user_update_interest_model = users_ns.model('UserUpdateInterest', {
     'interest': fields.String(required=True, description='用户兴趣')
 })
 
+user_login_model = users_ns.model('UserLogin', {
+    'username': fields.String(required=True, description='用户名'),
+    'password': fields.String(required=True, description='密码')
+})
+
 response_model = users_ns.model('Response', {
     'message': fields.String(description='响应消息'),
     'status': fields.String(description='响应状态'),
@@ -49,6 +54,92 @@ response_model = users_ns.model('Response', {
 def hash_password(password: str) -> str:
     """简单的密码哈希（生产环境应使用 bcrypt）"""
     return hashlib.sha256(password.encode()).hexdigest()
+
+
+def verify_password(password: str, hashed: str) -> bool:
+    """验证密码"""
+    return hash_password(password) == hashed
+
+
+@users_ns.route('/login')
+class UserLogin(Resource):
+    @users_ns.doc('user_login')
+    @users_ns.expect(user_login_model)
+    @users_ns.marshal_with(response_model)
+    def post(self):
+        """
+        用户登录
+        
+        验证用户名和密码，返回用户信息
+        """
+        try:
+            data = request.get_json()
+            
+            if not data:
+                return {
+                    'message': '请求数据格式错误',
+                    'status': 'error',
+                    'timestamp': datetime.now().isoformat(),
+                    'data': None
+                }, 400
+            
+            username = data.get('username')
+            password = data.get('password')
+            
+            if not username or not password:
+                return {
+                    'message': '用户名和密码不能为空',
+                    'status': 'error',
+                    'timestamp': datetime.now().isoformat(),
+                    'data': None
+                }, 400
+            
+            db = DbManager()
+            
+            # 查询用户
+            user = db.query_one(
+                "SELECT user_id, username, password, interest FROM users WHERE username = %s",
+                (username,)
+            )
+            
+            if not user:
+                return {
+                    'message': '用户名或密码错误',
+                    'status': 'error',
+                    'timestamp': datetime.now().isoformat(),
+                    'data': None
+                }, 401
+            
+            # 验证密码
+            if not verify_password(password, user['password']):
+                return {
+                    'message': '用户名或密码错误',
+                    'status': 'error',
+                    'timestamp': datetime.now().isoformat(),
+                    'data': None
+                }, 401
+            
+            logger.info(f"用户登录成功: {username} (ID={user['user_id']})")
+            
+            return {
+                'message': '登录成功',
+                'status': 'success',
+                'timestamp': datetime.now().isoformat(),
+                'data': {
+                    'user_id': user['user_id'],
+                    'username': user['username'],
+                    'interest': user['interest']
+                }
+            }
+            
+        except Exception as e:
+            logger.error(f"用户登录失败: {str(e)}", exc_info=True)
+            return {
+                'message': f'登录失败: {str(e)}',
+                'status': 'error',
+                'timestamp': datetime.now().isoformat(),
+                'data': None
+            }, 500
 
 
 @users_ns.route('/register')

@@ -4,10 +4,11 @@ import './Login.css'
 
 const Login = ({ onLogin }) => {
   const [formData, setFormData] = useState({
-    email: '',
+    username: '',
     password: ''
   })
   const [isLoading, setIsLoading] = useState(false)
+  const [error, setError] = useState('')
   const navigate = useNavigate()
 
   const handleChange = (e) => {
@@ -15,18 +16,50 @@ const Login = ({ onLogin }) => {
       ...formData,
       [e.target.name]: e.target.value
     })
+    // 清除错误信息
+    if (error) setError('')
   }
 
   const handleSubmit = async (e) => {
     e.preventDefault()
     setIsLoading(true)
+    setError('')
     
-    // 模拟登录过程
-    setTimeout(() => {
+    try {
+      // 调用后端登录 API
+      const response = await fetch('http://localhost:3001/api/users/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          username: formData.username,
+          password: formData.password
+        })
+      })
+
+      const data = await response.json()
+
+      if (response.ok && data.status === 'success') {
+        // 保存用户信息到 localStorage
+        localStorage.setItem('user', JSON.stringify(data.data))
+        localStorage.setItem('isLoggedIn', 'true')
+        
+        // 通知父组件登录成功
+        onLogin()
+        
+        // 跳转到首页
+        navigate('/')
+      } else {
+        // 登录失败
+        setError(data.message || '登录失败，请检查用户名和密码')
+      }
+    } catch (err) {
+      console.error('登录错误:', err)
+      setError('网络错误，请检查后端服务是否启动')
+    } finally {
       setIsLoading(false)
-      onLogin()
-      navigate('/')
-    }, 1500)
+    }
   }
 
   return (
@@ -38,15 +71,21 @@ const Login = ({ onLogin }) => {
         </div>
         
         <form onSubmit={handleSubmit} className="login-form">
+          {error && (
+            <div className="error-message">
+              {error}
+            </div>
+          )}
+          
           <div className="form-group">
-            <label htmlFor="email">邮箱地址</label>
+            <label htmlFor="username">用户名</label>
             <input
-              type="email"
-              id="email"
-              name="email"
-              value={formData.email}
+              type="text"
+              id="username"
+              name="username"
+              value={formData.username}
               onChange={handleChange}
-              placeholder="请输入您的邮箱"
+              placeholder="请输入您的用户名"
               required
             />
           </div>
