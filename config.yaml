@@ -25,3 +25,30 @@ jwt:
   secret_key: your_jwt_secret_key
   access_token_expires: 86400  # 24 hours
 
+# DeepSeek configuration (用于generator)
+openai:
+  api_key: "sk-a9440fe6b80f417d864eb5d63a7803b9"  # DeepSeek API Key (如果使用DeepSeek)
+  base_url: "https://api.deepseek.com"  # DeepSeek API地址
+  chat_model: "deepseek-chat"  # DeepSeek模型
+  timeout: 60
+  language: "zh"
+
+# Embedding service configuration
+embedding:
+  provider: "openrouter"  # 可选: "openai", "openrouter" (默认: "openrouter")
+
+# OpenRouter configuration (用于embedding，作为Gemini的备选)
+openrouter:
+  api_key: "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"  # OpenRouter API Key (从 https://openrouter.ai/keys 获取)
+  embedding_model: "text-embedding-3-small"  # 可选: text-embedding-3-small, text-embedding-3-large, text-embedding-ada-002
+  base_url: "https://openrouter.ai/api/v1"  # OpenRouter API地址
+  timeout: 30
+
+# Proxy configuration (如果需要代理访问Google服务)
+proxy:
+  enable: true
+  host: 127.0.0.1
+  port: 7890
+  scheme: http
+  # 或者直接使用url:
+  # url: http://127.0.0.1:7890

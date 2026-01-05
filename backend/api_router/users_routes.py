@@ -13,6 +13,7 @@ import hashlib
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from service.dbmanager import DbManager
+from orchestrator.recommendation_orchestrator import RecommendationOrchestrator
 
 # 配置日志
 logging.basicConfig(level=logging.INFO)
@@ -204,14 +205,25 @@ class UserRegister(Resource):
                 (username, hashed_password, interest)
             )
             
-            logger.info(f"用户注册成功: {username} (ID={result['lastrowid']})")
+            user_id = result['lastrowid']
+            logger.info(f"用户注册成功: {username} (ID={user_id})")
+            
+            # 如果提供了兴趣，触发生成embedding
+            if interest:
+                try:
+                    orchestrator = RecommendationOrchestrator()
+                    orchestrator.update_user_interest_embedding(user_id, interest)
+                    logger.info(f"用户 {user_id} 兴趣embedding初始化成功")
+                except Exception as e:
+                    logger.warning(f"初始化用户兴趣embedding时出错: {str(e)}")
+                    # 不影响注册流程
             
             return {
                 'message': '用户注册成功',
                 'status': 'success',
                 'timestamp': datetime.now().isoformat(),
                 'data': {
-                    'user_id': result['lastrowid'],
+                    'user_id': user_id,
                     'username': username,
                     'interest': interest
                 }
@@ -330,6 +342,26 @@ class UserInterest(Resource):
             )
             
             logger.info(f"用户 {user_id} 兴趣更新成功: {interest}")
+            
+            # 触发更新兴趣的embedding（异步处理，不阻塞主流程）
+            try:
+                orchestrator = RecommendationOrchestrator()
+                embedding_updated = orchestrator.update_user_interest_embedding(user_id, interest)
+                if embedding_updated:
+                    logger.info(f"用户 {user_id} 兴趣embedding更新成功")
+                else:
+                    logger.warning(f"用户 {user_id} 兴趣embedding更新失败（可能是配额限制，稍后会自动重试）")
+                    # 注意：即使embedding更新失败，兴趣文本已保存，可以在后台任务中重试
+            except RuntimeError as e:
+                error_msg = str(e)
+                # 配额错误不影响主流程，但记录警告
+                if "quota" in error_msg.lower() or "429" in error_msg or "rate limit" in error_msg.lower():
+                    logger.warning(f"用户 {user_id} 兴趣embedding更新失败（API配额限制）: {error_msg}")
+                else:
+                    logger.error(f"更新用户兴趣embedding时出错: {error_msg}", exc_info=True)
+            except Exception as e:
+                logger.error(f"更新用户兴趣embedding时出错: {str(e)}", exc_info=True)
+                # 不影响主流程，继续返回成功
             
             return {
                 'message': '用户兴趣更新成功',

@@ -4,49 +4,114 @@ import './Explore.css'
 const Explore = () => {
   const [blogs, setBlogs] = useState([])
   const [loading, setLoading] = useState(true)
+  const [page, setPage] = useState(1)
+  const [hasMore, setHasMore] = useState(true)
 
-  // 模拟从 API 获取博客数据
+  // 从后端 API 获取论文数据
   useEffect(() => {
-    // 这里将来会替换为真实的 API 调用
-    const mockBlogs = [
-      {
-        id: 1,
-        title: "人工智能在学术研究中的应用",
-        author: "张教授",
-        date: "2024-01-15",
-        summary: "探讨AI技术如何改变传统学术研究模式，提高研究效率和质量。",
-        tags: ["AI", "学术研究", "技术"],
-        readTime: "5分钟"
-      },
-      {
-        id: 2,
-        title: "机器学习算法优化研究",
-        author: "李博士",
-        date: "2024-01-14",
-        summary: "深入分析各种机器学习算法的性能优化方法，为实际应用提供指导。",
-        tags: ["机器学习", "算法优化", "研究"],
-        readTime: "8分钟"
-      },
-      {
-        id: 3,
-        title: "深度学习在自然语言处理中的突破",
-        author: "王研究员",
-        date: "2024-01-13",
-        summary: "介绍最新的深度学习技术在NLP领域的重要进展和应用案例。",
-        tags: ["深度学习", "NLP", "技术突破"],
-        readTime: "6分钟"
+    const fetchPapers = async () => {
+      try {
+        const response = await fetch('http://localhost:3001/papers/list?page=1&page_size=20')
+        const data = await response.json()
+        
+        if (response.ok && data.status === 'success' && data.data.papers) {
+          // 转换论文数据格式以匹配前端显示
+          const papers = data.data.papers.map(paper => ({
+            id: paper.paper_id,
+            title: paper.title || '无标题',
+            author: paper.author || '未知作者',
+            date: new Date().toISOString().split('T')[0], // 使用当前日期作为占位
+            summary: paper.abstract || '暂无摘要',
+            tags: [], // 论文没有标签字段，可以后续添加
+            readTime: "10分钟", // 默认阅读时间
+            pdf_url: paper.pdf_url
+          }))
+          setBlogs(papers)
+          
+          // 检查是否还有更多
+          const totalPages = data.data.pagination?.total_pages || 1
+          if (1 >= totalPages) {
+            setHasMore(false)
+          }
+        } else {
+          // 如果获取失败，使用空数组
+          setBlogs([])
+          setHasMore(false)
+        }
+      } catch (err) {
+        console.error('获取论文列表失败:', err)
+        // 网络错误时使用空数组
+        setBlogs([])
+        setHasMore(false)
+      } finally {
+        setLoading(false)
       }
-    ]
+    }
     
-    setTimeout(() => {
-      setBlogs(mockBlogs)
-      setLoading(false)
-    }, 1000)
+    fetchPapers()
   }, [])
 
-  const handleLoadMore = () => {
-    // 模拟加载更多博客
-    console.log('加载更多博客...')
+  const handleLoadMore = async () => {
+    if (!hasMore || loading) return
+    
+    setLoading(true)
+    try {
+      const nextPage = page + 1
+      const response = await fetch(`http://localhost:3001/papers/list?page=${nextPage}&page_size=20`)
+      const data = await response.json()
+      
+      if (response.ok && data.status === 'success' && data.data.papers) {
+        const newPapers = data.data.papers.map(paper => ({
+          id: paper.paper_id,
+          title: paper.title || '无标题',
+          author: paper.author || '未知作者',
+          date: new Date().toISOString().split('T')[0],
+          summary: paper.abstract || '暂无摘要',
+          tags: [],
+          readTime: "10分钟",
+          pdf_url: paper.pdf_url
+        }))
+        
+        if (newPapers.length > 0) {
+          setBlogs(prev => [...prev, ...newPapers])
+          setPage(nextPage)
+          
+          // 检查是否还有更多
+          const totalPages = data.data.pagination?.total_pages || 1
+          if (nextPage >= totalPages) {
+            setHasMore(false)
+          }
+        } else {
+          setHasMore(false)
+        }
+      } else {
+        setHasMore(false)
+      }
+    } catch (err) {
+      console.error('加载更多论文失败:', err)
+      setHasMore(false)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleReadFull = (pdfUrl) => {
+    if (pdfUrl) {
+      window.open(pdfUrl, '_blank')
+    } else {
+      alert('该论文暂无PDF链接')
+    }
+  }
+
+  const handleFavorite = (paperId) => {
+    // TODO: 实现收藏功能
+    const userStr = localStorage.getItem('user')
+    if (!userStr) {
+      alert('请先登录以收藏论文')
+      return
+    }
+    console.log('收藏论文:', paperId)
+    alert('收藏功能待实现')
   }
 
   if (loading) {
@@ -85,18 +150,41 @@ const Explore = () => {
               ))}
             </div>
             <div className="blog-actions">
-              <button className="btn-primary">阅读全文</button>
-              <button className="btn-secondary">收藏</button>
+              <button 
+                className="btn-primary" 
+                onClick={() => handleReadFull(blog.pdf_url)}
+              >
+                阅读全文
+              </button>
+              <button 
+                className="btn-secondary" 
+                onClick={() => handleFavorite(blog.id)}
+              >
+                收藏
+              </button>
             </div>
           </div>
         ))}
       </div>
       
-      <div className="load-more">
-        <button className="btn-load-more" onClick={handleLoadMore}>
-          加载更多论文...
-        </button>
-      </div>
+      {hasMore && (
+        <div className="load-more">
+          <button 
+            className="btn-load-more" 
+            onClick={handleLoadMore}
+            disabled={loading}
+          >
+            {loading ? '加载中...' : '加载更多论文...'}
+          </button>
+        </div>
+      )}
+      {!hasMore && blogs.length > 0 && (
+        <div className="load-more">
+          <p style={{ textAlign: 'center', color: '#666', padding: '20px' }}>
+            没有更多论文了
+          </p>
+        </div>
+      )}
     </div>
   )
 }
