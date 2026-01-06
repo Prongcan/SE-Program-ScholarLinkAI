@@ -1,13 +1,17 @@
 """
 Paper Fetching Service
-从 arXiv 抓取前两天到前一天的 CS 类论文元数据
+从 arXiv 抓取前两天到前一天的 CS 类论文元数据，并自动计算embeddings
 """
 
 import arxiv
 import time
+import json
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 import logging
+
+from .dbmanager import DbManager
+from .openrouter_embedding import OpenRouterEmbedding
 
 # 配置日志
 logging.basicConfig(
@@ -24,9 +28,11 @@ class PaperFetchService:
     """
     
     def __init__(self):
-        """初始化 arXiv 客户端"""
+        """初始化 arXiv 客户端、embedding服务和数据库连接"""
         self.client = arxiv.Client()
         self.arxiv_pool = set()  # 用于去重的论文 ID 集合
+        self.db = DbManager()
+        self.embedding_service = OpenRouterEmbedding()
     
     def fetch_papers(self, max_results: Optional[int] = None) -> List[Dict]:
         """
@@ -72,9 +78,14 @@ class PaperFetchService:
             
             # 解析论文数据
             papers = self._parse_papers(results_list)
-            
+
             logger.info(f"成功解析 {len(papers)} 篇论文元数据")
-            
+
+            # 将论文存储到数据库并计算embeddings
+            stored_count = self._store_papers_and_compute_embeddings(papers)
+
+            logger.info(f"成功存储并计算embedding: {stored_count}/{len(papers)} 篇论文")
+
             return papers
             
         except Exception as e:
@@ -142,8 +153,155 @@ class PaperFetchService:
         
         if failed_count > 0:
             logger.warning(f"共有 {failed_count} 篇论文解析失败")
-        
+
         return papers
+
+    def _store_papers_and_compute_embeddings(self, papers: List[Dict]) -> int:
+        """
+        将论文存储到数据库并计算embeddings
+
+        Args:
+            papers: 论文数据列表
+
+        Returns:
+            成功处理的数量
+        """
+        if not papers:
+            return 0
+
+        success_count = 0
+        batch_size = 5  # 每批处理5篇论文，避免API限流
+
+        logger.info(f"开始批量存储并计算 {len(papers)} 篇论文的embeddings")
+
+        for i in range(0, len(papers), batch_size):
+            batch = papers[i:i + batch_size]
+            batch_success = 0
+
+            for paper in batch:
+                try:
+                    # 存储论文到数据库
+                    paper_id = self._store_paper_to_db(paper)
+                    if not paper_id:
+                        logger.warning(f"存储论文失败: {paper['arxiv_id']}")
+                        continue
+
+                    # 计算并存储embedding
+                    if self._compute_and_store_paper_embedding(paper_id, paper):
+                        batch_success += 1
+                        success_count += 1
+                    else:
+                        logger.warning(f"计算论文embedding失败: {paper['arxiv_id']}")
+
+                except Exception as e:
+                    logger.error(f"处理论文时出错 {paper['arxiv_id']}: {str(e)}")
+                    continue
+
+            logger.info(f"已处理批次 {i//batch_size + 1}, 当前批次成功: {batch_success}/{len(batch)}")
+
+            # 批次间稍作延迟，避免API限流
+            if i + batch_size < len(papers):
+                time.sleep(2)
+
+        logger.info(f"批量处理完成，总成功: {success_count}/{len(papers)}")
+        return success_count
+
+    def _store_paper_to_db(self, paper: Dict) -> Optional[int]:
+        """
+        将单篇论文存储到数据库
+
+        Args:
+            paper: 论文数据
+
+        Returns:
+            paper_id 如果成功，否则None
+        """
+        try:
+            # 将作者列表转换为字符串
+            authors_str = ", ".join(paper['authors']) if paper['authors'] else ""
+
+            # 插入论文数据
+            self.db.execute(
+                """
+                INSERT INTO papers (abstract, pdf_url, title, author)
+                VALUES (%s, %s, %s, %s)
+                ON DUPLICATE KEY UPDATE
+                    abstract = VALUES(abstract),
+                    pdf_url = VALUES(pdf_url),
+                    title = VALUES(title),
+                    author = VALUES(author)
+                """,
+                (
+                    paper['abstract'],
+                    paper['pdf_url'],
+                    paper['title'],
+                    authors_str
+                )
+            )
+
+            # 获取刚插入的paper_id
+            result = self.db.query_one(
+                "SELECT paper_id FROM papers WHERE pdf_url = %s",
+                (paper['pdf_url'],)
+            )
+
+            if result:
+                return result['paper_id']
+            else:
+                logger.error(f"无法获取论文ID: {paper['arxiv_id']}")
+                return None
+
+        except Exception as e:
+            logger.error(f"存储论文到数据库失败 {paper['arxiv_id']}: {str(e)}")
+            return None
+
+    def _compute_and_store_paper_embedding(self, paper_id: int, paper: Dict) -> bool:
+        """
+        计算论文embedding并存储到数据库
+
+        Args:
+            paper_id: 论文ID
+            paper: 论文数据
+
+        Returns:
+            是否成功
+        """
+        try:
+            # 组合标题和摘要作为embedding输入
+            text = f"{paper['title']} {paper['abstract']}".strip()
+            if not text:
+                logger.warning(f"论文{paper_id}没有有效文本内容")
+                return False
+
+            # 计算embedding
+            embedding = self.embedding_service.embed_text(text, normalize=True)
+
+            # 转换为JSON字符串
+            embedding_str = json.dumps(embedding)
+
+            # 存储到paper_embeddings表
+            self.db.execute(
+                """
+                INSERT INTO paper_embeddings (paper_id, embedding)
+                VALUES (%s, %s)
+                ON DUPLICATE KEY UPDATE embedding = VALUES(embedding)
+                """,
+                (paper_id, embedding_str)
+            )
+
+            logger.debug(f"论文{paper_id}的embedding计算并存储成功")
+            return True
+
+        except RuntimeError as e:
+            error_msg = str(e)
+            if "quota" in error_msg.lower() or "429" in error_msg or "rate limit" in error_msg.lower():
+                logger.warning(f"论文{paper_id}的embedding计算失败（配额限制）: {error_msg}")
+            else:
+                logger.error(f"论文{paper_id}的embedding计算失败: {error_msg}")
+            return False
+        except Exception as e:
+            logger.error(f"计算论文{paper_id}的embedding时出错: {str(e)}")
+            return False
 
 
 # 使用示例
