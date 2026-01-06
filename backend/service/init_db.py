@@ -179,10 +179,19 @@ def create_tables() -> None:
                     `user_id` INT AUTO_INCREMENT PRIMARY KEY,
                     `username` VARCHAR(100) NOT NULL UNIQUE,
                     `password` VARCHAR(255) NOT NULL,
-                    `interest` VARCHAR(255)
+                    `interest` VARCHAR(255),
+                    `interest_embedding` TEXT
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
                 """
             )
+            
+            # 检查并添加interest_embedding字段（如果表已存在但字段不存在）
+            try:
+                cur.execute("ALTER TABLE `users` ADD COLUMN `interest_embedding` TEXT")
+                print("[INFO] 已添加 interest_embedding 字段到 users 表")
+            except Exception:
+                # 字段已存在，忽略错误
+                pass
 
             # recommendations 表
             cur.execute(
