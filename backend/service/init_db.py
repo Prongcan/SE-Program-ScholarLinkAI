@@ -236,6 +236,22 @@ def create_tables() -> None:
                 """
             )
 
+            # chat_history 表
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS `chat_history` (
+                    `id` INT AUTO_INCREMENT PRIMARY KEY,
+                    `recommendation_id` INT NOT NULL,
+                    `user_message` TEXT NOT NULL,
+                    `ai_response` TEXT NOT NULL,
+                    `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    CONSTRAINT `fk_chat_reco` FOREIGN KEY (`recommendation_id`) REFERENCES `recommendations`(`id`) ON DELETE CASCADE,
+                    INDEX `idx_recommendation_id` (`recommendation_id`),
+                    INDEX `idx_created_at` (`created_at`)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+                """
+            )
+
             # 检查并升级embedding字段类型（如果表已存在但字段类型不匹配）
             try:
                 cur.execute("ALTER TABLE `paper_embeddings` MODIFY COLUMN `embedding` LONGTEXT NOT NULL")

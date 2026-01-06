@@ -44,7 +44,7 @@ class SearchService:
         # 预取最新博客（如果有）按 paper_id
         blog_rows = self.db.query_all(
             """
-            SELECT r.paper_id, r.blog, r.user_id
+            SELECT r.id, r.paper_id, r.blog, r.user_id
             FROM recommendations r
             WHERE r.blog IS NOT NULL
             ORDER BY r.created_at DESC
@@ -54,7 +54,7 @@ class SearchService:
         for r in blog_rows:
             pid = r.get("paper_id")
             if pid and pid not in blog_map:
-                blog_map[pid] = {"blog": r.get("blog"), "user_id": r.get("user_id")}
+                blog_map[pid] = {"id": r.get("id"), "blog": r.get("blog"), "user_id": r.get("user_id")}
 
         q_arr = np.array(q_vec)
         results: List[Dict[str, Any]] = []
@@ -71,6 +71,7 @@ class SearchService:
                 pid = p["paper_id"]
                 blog_info = blog_map.get(pid) or {}
                 results.append({
+                    "id": blog_info.get("id"),
                     "paper_id": pid,
                     "title": p.get("title"),
                     "abstract": p.get("abstract"),

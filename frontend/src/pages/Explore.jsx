@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import './Explore.css'
 
 const truncate = (text = '', len = 120) => {
@@ -7,6 +8,7 @@ const truncate = (text = '', len = 120) => {
 }
 
 const Explore = () => {
+  const navigate = useNavigate()
   const [blogs, setBlogs] = useState([])
   const [loading, setLoading] = useState(true)
   const [userId, setUserId] = useState(null)
@@ -40,6 +42,7 @@ const Explore = () => {
         if (response.ok && data.status === 'success' && data.data?.recommendations) {
           const recs = data.data.recommendations.map((r, idx) => ({
             id: `${r.user_id}-${r.paper_id}-${idx}`,
+            recommendation_id: r.id, // 添加recommendation_id
             user_id: r.user_id,
             paper_id: r.paper_id,
             title: r.title || '无标题',
@@ -81,6 +84,7 @@ const Explore = () => {
       if (resp.ok && data.status === 'success' && data.data?.results) {
         const recs = data.data.results.map((r, idx) => ({
           id: `s-${r.paper_id}-${idx}`,
+          recommendation_id: r.id, // 添加recommendation_id
           user_id: r.blog_user_id,
           paper_id: r.paper_id,
           title: r.title || '无标题',
@@ -117,6 +121,7 @@ const Explore = () => {
       if (response.ok && data.status === 'success' && data.data?.recommendations) {
         const recs = data.data.recommendations.map((r, idx) => ({
           id: `${r.user_id}-${r.paper_id}-${idx}`,
+          recommendation_id: r.id, // 添加recommendation_id
           user_id: r.user_id,
           paper_id: r.paper_id,
           title: r.title || '无标题',
@@ -256,20 +261,26 @@ const Explore = () => {
             <p className="blog-summary">{blog.summary}</p>
             {blog.liked && <div className="tag liked-tag">喜欢</div>}
             <div className="blog-actions">
-              <button 
-                className="btn-primary" 
+              <button
+                className="btn-primary"
                 onClick={() => openBlogMarkdown(blog.title, blog.blog_content, blog.pdf_url)}
               >
                 阅读博客
               </button>
-              <button 
-                className="btn-secondary" 
+              <button
+                className="btn-ai"
+                onClick={() => navigate(`/chat/${blog.recommendation_id}`)}
+              >
+                🤖 AI对话
+              </button>
+              <button
+                className="btn-secondary"
                 onClick={() => (blog.pdf_url ? window.open(blog.pdf_url, '_blank') : alert('暂无PDF链接'))}
               >
                 查看原文 PDF
               </button>
-              <button 
-                className="btn-secondary" 
+              <button
+                className="btn-secondary"
                 onClick={() => toggleLike(blog.paper_id, blog.liked)}
               >
                 {blog.liked ? '已收藏' : '收藏'}

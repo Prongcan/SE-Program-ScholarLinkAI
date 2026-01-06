@@ -749,6 +749,7 @@ class RecommendationOrchestrator:
 
             sql = f"""
                 SELECT
+                    r.id,
                     r.user_id,
                     r.paper_id,
                     r.blog,
