@@ -23,6 +23,34 @@ def create_app():
     # 启用CORS
     CORS(app)
     
+    # 先定义根路径（在 Api 对象创建之前，确保优先级）
+    @app.route('/')
+    def api_root():
+        """API 根路径 - 显示所有可用的 API 端点"""
+        return jsonify({
+            'message': 'ScholarLink AI API',
+            'version': Config.API_VERSION,
+            'status': 'running',
+            'timestamp': datetime.now().isoformat(),
+            'endpoints': {
+                'swagger_docs': '/docs/',
+                'hello': '/hello/',
+                'papers': {
+                    'fetch': '/papers/fetch',
+                    'list': '/papers/list',
+                    'detail': '/papers/<paper_id>'
+                },
+                'users': {
+                    'register': '/users/register',
+                    'login': '/users/login',
+                    'list': '/users/list',
+                    'detail': '/users/<user_id>'
+                },
+                'health': '/health'
+            },
+            'description': '访问 /docs/ 查看完整的 Swagger API 文档'
+        })
+    
     # 创建 API 文档
     api = Api(
         app,
@@ -30,7 +58,7 @@ def create_app():
         title=Config.API_TITLE,
         description=Config.API_DESCRIPTION,
         doc='/docs/',  # Swagger UI 路径
-        prefix='/api'
+        prefix=''  # 不使用 /api 前缀，所有接口直接在根路径下
     )
     
     # 创建命名空间
@@ -132,27 +160,16 @@ def create_app():
                 'timestamp': datetime.now().isoformat(),
                 'data': {
                     'endpoints': {
-                        'GET /api/hello/': '基础 Hello World',
-                        'GET /api/hello/<name>': '带参数的 Hello',
-                        'POST /api/hello/post': 'POST 请求的 Hello',
-                        'GET /api/hello/status': 'API 状态检查'
+                        'GET /hello/': '基础 Hello World',
+                        'GET /hello/<name>': '带参数的 Hello',
+                        'POST /hello/post': 'POST 请求的 Hello',
+                        'GET /hello/status': 'API 状态检查'
                     }
                 }
             }
     
     # 注册原有的蓝图（保持兼容性）
-    app.register_blueprint(hello_bp, url_prefix='/api/v1')
-    
-    # 根路径
-    @app.route('/')
-    def index():
-        return jsonify({
-            'message': '欢迎使用 ScholarLink AI 后端服务',
-            'version': Config.API_VERSION,
-            'status': 'running',
-            'timestamp': datetime.now().isoformat(),
-            'environment': Config.ENV
-        })
+    app.register_blueprint(hello_bp, url_prefix='/v1')
     
     # 健康检查接口
     @app.route('/health')
