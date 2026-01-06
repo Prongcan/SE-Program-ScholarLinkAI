@@ -222,6 +222,20 @@ def create_tables() -> None:
                 """
             )
 
+            # paper_liked 表
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS `paper_liked` (
+                    `user_id` INT NOT NULL,
+                    `paper_id` INT NOT NULL,
+                    `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (`user_id`, `paper_id`),
+                    CONSTRAINT `fk_like_user` FOREIGN KEY (`user_id`) REFERENCES `users`(`user_id`) ON DELETE CASCADE,
+                    CONSTRAINT `fk_like_paper` FOREIGN KEY (`paper_id`) REFERENCES `papers`(`paper_id`) ON DELETE CASCADE
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+                """
+            )
+
             # 检查并升级embedding字段类型（如果表已存在但字段类型不匹配）
             try:
                 cur.execute("ALTER TABLE `paper_embeddings` MODIFY COLUMN `embedding` LONGTEXT NOT NULL")

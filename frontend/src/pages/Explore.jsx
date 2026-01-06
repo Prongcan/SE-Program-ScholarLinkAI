@@ -1,117 +1,212 @@
 import React, { useState, useEffect } from 'react'
 import './Explore.css'
 
+const truncate = (text = '', len = 120) => {
+  if (!text) return ''
+  return text.length > len ? `${text.slice(0, len)}...` : text
+}
+
 const Explore = () => {
   const [blogs, setBlogs] = useState([])
   const [loading, setLoading] = useState(true)
-  const [page, setPage] = useState(1)
-  const [hasMore, setHasMore] = useState(true)
+  const [userId, setUserId] = useState(null)
+  const [query, setQuery] = useState('')
+  const [isSearching, setIsSearching] = useState(false)
 
-  // 从后端 API 获取论文数据
+  // 从推荐表获取当前用户/默认的推荐博客
   useEffect(() => {
-    const fetchPapers = async () => {
+    const fetchRecommendations = async () => {
+      setLoading(true)
       try {
-        const response = await fetch('http://localhost:3001/papers/list?page=1&page_size=20')
-        const data = await response.json()
-        
-        if (response.ok && data.status === 'success' && data.data.papers) {
-          // 转换论文数据格式以匹配前端显示
-          const papers = data.data.papers.map(paper => ({
-            id: paper.paper_id,
-            title: paper.title || '无标题',
-            author: paper.author || '未知作者',
-            date: new Date().toISOString().split('T')[0], // 使用当前日期作为占位
-            summary: paper.abstract || '暂无摘要',
-            tags: [], // 论文没有标签字段，可以后续添加
-            readTime: "10分钟", // 默认阅读时间
-            pdf_url: paper.pdf_url
-          }))
-          setBlogs(papers)
-          
-          // 检查是否还有更多
-          const totalPages = data.data.pagination?.total_pages || 1
-          if (1 >= totalPages) {
-            setHasMore(false)
+        const userStr = localStorage.getItem('user')
+        let uid = null
+        if (userStr) {
+          try {
+            const u = JSON.parse(userStr)
+            uid = u?.user_id
+            setUserId(uid || null)
+          } catch (e) {
+            console.warn('解析用户信息失败', e)
           }
+        }
+
+        const params = new URLSearchParams()
+        params.append('limit', '20')
+        if (uid) params.append('user_id', uid)
+
+        const response = await fetch(`http://localhost:3001/recommendationOrchestrator/list?${params.toString()}`)
+        const data = await response.json()
+
+        if (response.ok && data.status === 'success' && data.data?.recommendations) {
+          const recs = data.data.recommendations.map((r, idx) => ({
+            id: `${r.user_id}-${r.paper_id}-${idx}`,
+            user_id: r.user_id,
+            paper_id: r.paper_id,
+            title: r.title || '无标题',
+            author: truncate(r.author || '未知作者', 40),
+            date: (r.created_at || '').slice(0, 10) || new Date().toISOString().split('T')[0],
+            summary: truncate(r.abstract || '暂无摘要', 180),
+            blog_content: r.blog || '',
+            pdf_url: r.pdf_url,
+            liked: !!r.liked
+          }))
+          setBlogs(recs)
         } else {
-          // 如果获取失败，使用空数组
           setBlogs([])
-          setHasMore(false)
         }
       } catch (err) {
-        console.error('获取论文列表失败:', err)
-        // 网络错误时使用空数组
+        console.error('获取推荐博客失败:', err)
         setBlogs([])
-        setHasMore(false)
       } finally {
         setLoading(false)
       }
     }
-    
-    fetchPapers()
+
+    fetchRecommendations()
   }, [])
 
-  const handleLoadMore = async () => {
-    if (!hasMore || loading) return
-    
+  const fetchSearch = async () => {
+    if (!query.trim()) {
+      alert('请输入搜索内容')
+      return
+    }
+    setIsSearching(true)
     setLoading(true)
     try {
-      const nextPage = page + 1
-      const response = await fetch(`http://localhost:3001/papers/list?page=${nextPage}&page_size=20`)
-      const data = await response.json()
-      
-      if (response.ok && data.status === 'success' && data.data.papers) {
-        const newPapers = data.data.papers.map(paper => ({
-          id: paper.paper_id,
-          title: paper.title || '无标题',
-          author: paper.author || '未知作者',
+      const params = new URLSearchParams()
+      params.append('query', query.trim())
+      params.append('topk', '5')
+      const resp = await fetch(`http://localhost:3001/recommendationOrchestrator/search?${params.toString()}`)
+      const data = await resp.json()
+      if (resp.ok && data.status === 'success' && data.data?.results) {
+        const recs = data.data.results.map((r, idx) => ({
+          id: `s-${r.paper_id}-${idx}`,
+          user_id: r.blog_user_id,
+          paper_id: r.paper_id,
+          title: r.title || '无标题',
+          author: truncate(r.author || '未知作者', 40),
           date: new Date().toISOString().split('T')[0],
-          summary: paper.abstract || '暂无摘要',
-          tags: [],
-          readTime: "10分钟",
-          pdf_url: paper.pdf_url
+          summary: truncate(r.abstract || '暂无摘要', 180),
+          blog_content: r.blog || '',
+          pdf_url: r.pdf_url,
+          liked: false
         }))
-        
-        if (newPapers.length > 0) {
-          setBlogs(prev => [...prev, ...newPapers])
-          setPage(nextPage)
-          
-          // 检查是否还有更多
-          const totalPages = data.data.pagination?.total_pages || 1
-          if (nextPage >= totalPages) {
-            setHasMore(false)
-          }
-        } else {
-          setHasMore(false)
-        }
+        setBlogs(recs)
       } else {
-        setHasMore(false)
+        setBlogs([])
       }
-    } catch (err) {
-      console.error('加载更多论文失败:', err)
-      setHasMore(false)
+    } catch (e) {
+      console.error('搜索失败', e)
+      setBlogs([])
     } finally {
       setLoading(false)
     }
   }
 
-  const handleReadFull = (pdfUrl) => {
-    if (pdfUrl) {
-      window.open(pdfUrl, '_blank')
-    } else {
-      alert('该论文暂无PDF链接')
+  const resetToRecommend = async () => {
+    setQuery('')
+    setIsSearching(false)
+    // 重新获取推荐
+    setLoading(true)
+    try {
+      const params = new URLSearchParams()
+      params.append('limit', '20')
+      if (userId) params.append('user_id', userId)
+      const response = await fetch(`http://localhost:3001/recommendationOrchestrator/list?${params.toString()}`)
+      const data = await response.json()
+      if (response.ok && data.status === 'success' && data.data?.recommendations) {
+        const recs = data.data.recommendations.map((r, idx) => ({
+          id: `${r.user_id}-${r.paper_id}-${idx}`,
+          user_id: r.user_id,
+          paper_id: r.paper_id,
+          title: r.title || '无标题',
+          author: truncate(r.author || '未知作者', 40),
+          date: (r.created_at || '').slice(0, 10) || new Date().toISOString().split('T')[0],
+          summary: truncate(r.abstract || '暂无摘要', 180),
+          blog_content: r.blog || '',
+          pdf_url: r.pdf_url,
+          liked: !!r.liked
+        }))
+        setBlogs(recs)
+      } else {
+        setBlogs([])
+      }
+    } catch (e) {
+      console.error('获取推荐失败', e)
+      setBlogs([])
+    } finally {
+      setLoading(false)
     }
   }
 
-  const handleFavorite = (paperId) => {
-    // TODO: 实现收藏功能
-    const userStr = localStorage.getItem('user')
-    if (!userStr) {
-      alert('请先登录以收藏论文')
+  const openBlogMarkdown = (title, blogContent, fallbackPdf) => {
+    if (!blogContent) {
+      if (fallbackPdf) {
+        window.open(fallbackPdf, '_blank')
+      } else {
+        alert('暂无博客内容')
+      }
       return
     }
-    console.log('收藏论文:', paperId)
-    alert('收藏功能待实现')
+
+    const win = window.open('', '_blank')
+    if (!win) return
+    const safeTitle = title || '博客'
+    const html = `
+      <!doctype html>
+      <html>
+        <head>
+          <meta charset="utf-8" />
+          <title>${safeTitle}</title>
+          <style>
+            body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; padding: 30px; max-width: 960px; margin: auto; line-height: 1.6; }
+            pre { background: #f6f8fa; padding: 12px; border-radius: 6px; overflow: auto; }
+            code { background: #f6f8fa; padding: 2px 4px; border-radius: 4px; }
+            h1, h2, h3 { color: #333; }
+            a { color: #667eea; }
+          </style>
+          <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+        </head>
+        <body>
+          <h1>${safeTitle}</h1>
+          <div id="app"></div>
+          <script>
+            const md = \`${blogContent.replace(/`/g, '\\`')}\`
+            document.getElementById('app').innerHTML = marked.parse(md)
+          </script>
+        </body>
+      </html>
+    `
+    win.document.write(html)
+    win.document.close()
+  }
+
+  const toggleLike = async (paperId, liked) => {
+    if (!userId) {
+      alert('请先登录再收藏')
+      return
+    }
+    try {
+      const resp = await fetch('http://localhost:3001/recommendationOrchestrator/like', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_id: userId,
+          paper_id: paperId,
+          action: liked ? 'unlike' : 'like'
+        })
+      })
+      const data = await resp.json()
+      if (!resp.ok || data.status !== 'success') {
+        throw new Error(data.message || '操作失败')
+      }
+      setBlogs(prev =>
+        prev.map(b => b.paper_id === paperId ? { ...b, liked: !liked } : b)
+      )
+    } catch (e) {
+      console.error('收藏操作失败', e)
+      alert('收藏操作失败，请稍后重试')
+    }
   }
 
   if (loading) {
@@ -119,7 +214,7 @@ const Explore = () => {
       <div className="explore-container">
         <div className="loading">
           <div className="loading-spinner"></div>
-          <p>正在加载更多论文...</p>
+          <p>正在加载推荐博客...</p>
         </div>
       </div>
     )
@@ -128,11 +223,27 @@ const Explore = () => {
   return (
     <div className="explore-container">
       <div className="explore-header">
-        <h1>探索论文</h1>
-        <p>发现最新的学术研究成果和前沿技术</p>
+        <h1>{isSearching ? '搜索结果' : '个性化推荐'}</h1>
+        <p>{isSearching ? '基于语义搜索的匹配结果' : '基于兴趣与相似度，为你推荐的论文博客'}</p>
+        <div style={{ marginTop: 20, display: 'flex', gap: 10, justifyContent: 'center' }}>
+          <input
+            type="text"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="输入关键词进行语义搜索"
+            style={{ padding: '10px 12px', borderRadius: 8, border: '1px solid #ddd', width: '320px' }}
+          />
+          <button className="btn-primary" onClick={fetchSearch}>搜索</button>
+          <button className="btn-secondary" onClick={resetToRecommend}>回到推荐</button>
+        </div>
       </div>
       
       <div className="blogs-grid">
+        {blogs.length === 0 && (
+          <div style={{ textAlign: 'center', color: '#666', gridColumn: '1/-1' }}>
+            暂无推荐数据
+          </div>
+        )}
         {blogs.map(blog => (
           <div key={blog.id} className="blog-card">
             <div className="blog-header">
@@ -140,51 +251,33 @@ const Explore = () => {
               <div className="blog-meta">
                 <span className="author">作者: {blog.author}</span>
                 <span className="date">{blog.date}</span>
-                <span className="read-time">{blog.readTime}</span>
               </div>
             </div>
             <p className="blog-summary">{blog.summary}</p>
-            <div className="blog-tags">
-              {blog.tags.map(tag => (
-                <span key={tag} className="tag">{tag}</span>
-              ))}
-            </div>
+            {blog.liked && <div className="tag liked-tag">喜欢</div>}
             <div className="blog-actions">
               <button 
                 className="btn-primary" 
-                onClick={() => handleReadFull(blog.pdf_url)}
+                onClick={() => openBlogMarkdown(blog.title, blog.blog_content, blog.pdf_url)}
               >
-                阅读全文
+                阅读博客
               </button>
               <button 
                 className="btn-secondary" 
-                onClick={() => handleFavorite(blog.id)}
+                onClick={() => (blog.pdf_url ? window.open(blog.pdf_url, '_blank') : alert('暂无PDF链接'))}
               >
-                收藏
+                查看原文 PDF
+              </button>
+              <button 
+                className="btn-secondary" 
+                onClick={() => toggleLike(blog.paper_id, blog.liked)}
+              >
+                {blog.liked ? '已收藏' : '收藏'}
               </button>
             </div>
           </div>
         ))}
       </div>
-      
-      {hasMore && (
-        <div className="load-more">
-          <button 
-            className="btn-load-more" 
-            onClick={handleLoadMore}
-            disabled={loading}
-          >
-            {loading ? '加载中...' : '加载更多论文...'}
-          </button>
-        </div>
-      )}
-      {!hasMore && blogs.length > 0 && (
-        <div className="load-more">
-          <p style={{ textAlign: 'center', color: '#666', padding: '20px' }}>
-            没有更多论文了
-          </p>
-        </div>
-      )}
     </div>
   )
 }

@@ -7,10 +7,12 @@ import logging
 import os
 from typing import List, Dict, Any, Optional
 import numpy as np
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from service.dbmanager import DbManager
 from service.openrouter_embedding import OpenRouterEmbedding
 from service.retry_utils import retry_on_quota_error
+from service.Generate_blogs import BlogGenerator
 
 logger = logging.getLogger(__name__)
 
@@ -448,6 +450,422 @@ class RecommendationOrchestrator:
         except Exception as e:
             logger.error(f"批量更新论文embeddings失败: {str(e)}", exc_info=True)
             return 0
+
+    def generate_blogs(
+        self,
+        topk: int = 5,
+        user_id: Optional[int] = None,
+        max_workers: int = 4,
+    ) -> Dict[str, Any]:
+        """
+        生成指定数量的论文博客，并按需保存到 recommendations 表。
+
+        Args:
+            topk: 生成博客的数量，默认5，最大10。
+            user_id: 若提供，则将生成结果保存到 recommendations.user_id 关联的记录。
+            max_workers: 并发工作线程数（默认4），控制同时生成的博客数量。
+
+        Returns:
+            {
+                "blogs": [...],              # 已生成的博客列表
+                "requested": topk,           # 请求的数量
+                "generated": len(blogs),     # 实际生成的数量
+                "saved": saved_count,        # 成功写入 recommendations 的数量
+                "save_failed": failed_save_count  # 保存失败的数量
+            }
+        """
+        try:
+            # 验证topk参数
+            if not isinstance(topk, int) or topk <= 0:
+                logger.error(f"无效的topk参数: {topk}")
+                return {"blogs": [], "requested": topk, "generated": 0, "saved": 0, "save_failed": 0}
+            if topk > 10:
+                logger.warning(f"topk参数超过最大值10，已调整为10")
+                topk = 10
+
+            logger.info(f"开始生成 {topk} 篇博客")
+
+            # 获取最新的论文（按paper_id降序排序）
+            papers = self.db.query_all(
+                """
+                SELECT paper_id, title, pdf_url
+                FROM papers
+                WHERE pdf_url IS NOT NULL AND pdf_url != ''
+                ORDER BY paper_id DESC
+                LIMIT %s
+                """,
+                (topk,)
+            )
+
+            if not papers:
+                logger.warning("没有找到有效的论文数据")
+                return {"blogs": [], "requested": topk, "generated": 0, "saved": 0, "save_failed": 0}
+
+            logger.info(f"找到 {len(papers)} 篇论文，开始生成博客")
+
+            # 初始化博客生成器（线程安全：无共享状态，仅使用 client）
+            blog_generator = BlogGenerator()
+
+            blogs = []
+            success_count = 0
+            failed_count = 0
+            saved_count = 0
+            failed_save_count = 0
+
+            def _process_one(paper: Dict[str, Any]) -> Dict[str, Any]:
+                paper_id = paper['paper_id']
+                title = paper['title']
+                pdf_url = paper['pdf_url']
+
+                try:
+                    logger.info(f"正在为论文生成博客: {title[:50]}...")
+                    blog_content = blog_generator.generate_from_pdf_url(pdf_url)
+                    result = {
+                        'paper_id': paper_id,
+                        'title': title,
+                        'pdf_url': pdf_url,
+                        'blog_content': blog_content,
+                        'status': 'ok'
+                    }
+
+                    if user_id is not None:
+                        try:
+                            self.db.execute(
+                                """
+                                INSERT INTO recommendations (user_id, paper_id, blog)
+                                VALUES (%s, %s, %s)
+                                ON DUPLICATE KEY UPDATE blog = VALUES(blog), created_at = CURRENT_TIMESTAMP
+                                """,
+                                (user_id, paper_id, blog_content)
+                            )
+                            result['saved'] = True
+                        except Exception as db_err:
+                            logger.error(
+                                f"保存博客到 recommendations 失败: user_id={user_id}, paper_id={paper_id}, err={db_err}"
+                            )
+                            result['saved'] = False
+                            result['save_err'] = str(db_err)
+                    return result
+                except Exception as e:
+                    logger.error(f"为论文 {title[:50]} 生成博客失败: {str(e)}")
+                    return {
+                        'paper_id': paper_id,
+                        'title': title,
+                        'pdf_url': pdf_url,
+                        'status': 'fail',
+                        'err': str(e),
+                    }
+
+            # 并发生成
+            with ThreadPoolExecutor(max_workers=max_workers or 1) as executor:
+                future_map = {executor.submit(_process_one, p): p for p in papers}
+                for fut in as_completed(future_map):
+                    res = fut.result()
+                    if res.get('status') == 'ok':
+                        blogs.append({
+                            'paper_id': res['paper_id'],
+                            'title': res['title'],
+                            'pdf_url': res['pdf_url'],
+                            'blog_content': res['blog_content']
+                        })
+                        success_count += 1
+                        if res.get('saved'):
+                            saved_count += 1
+                        elif res.get('saved') is False:
+                            failed_save_count += 1
+                    else:
+                        failed_count += 1
+
+            logger.info(f"博客生成完成: 成功 {success_count} 篇，失败 {failed_count} 篇")
+
+            blogs = blogs[:topk]  # 确保返回的数量不超过topk
+
+            return {
+                "blogs": blogs,
+                "requested": topk,
+                "generated": len(blogs),
+                "saved": saved_count,
+                "save_failed": failed_save_count
+            }
+
+        except Exception as e:
+            logger.error(f"生成博客失败: {str(e)}", exc_info=True)
+            return {"blogs": [], "requested": topk, "generated": 0, "saved": 0, "save_failed": 0}
+
+
+    def generate_blogs_for_all_users(
+        self,
+        topk_per_user: int = 3,
+        max_workers: int = 4,
+    ) -> Dict[str, Any]:
+        """
+        为所有有兴趣embedding的用户生成推荐博客并写入 recommendations 表。
+
+        流程：
+        1) 找出有兴趣 embedding 的用户
+        2) 为每个用户计算前 topk_per_user 篇推荐论文
+        3) 合并所有用户的论文需求为去重集合，每篇博客只生成一次
+        4) 将生成结果写入 recommendations（ON DUPLICATE KEY UPDATE）
+        """
+        try:
+            users = self.db.query_all(
+                """
+                SELECT u.user_id
+                FROM users u
+                JOIN interest_embeddings ie ON u.user_id = ie.user_id
+                """
+            )
+            if not users:
+                logger.warning("没有找到带兴趣embedding的用户")
+                return {
+                    "message": "no users with embeddings",
+                    "users": 0,
+                    "papers": 0,
+                    "generated": 0,
+                    "saved_pairs": 0,
+                    "failed_generate": 0,
+                    "failed_save": 0,
+                }
+
+            user_reco: Dict[int, List[int]] = {}
+            paper_map: Dict[int, Dict[str, Any]] = {}
+
+            for u in users:
+                uid = u["user_id"]
+                recs = self.recommend_papers(uid, top_k=topk_per_user)
+                paper_ids: List[int] = []
+                for r in recs:
+                    pid = r.get("paper_id")
+                    pdf_url = r.get("pdf_url")
+                    title = r.get("title")
+                    if not pid or not pdf_url:
+                        continue
+                    if pid not in paper_map:
+                        paper_map[pid] = {
+                            "paper_id": pid,
+                            "title": title,
+                            "pdf_url": pdf_url,
+                        }
+                    paper_ids.append(pid)
+                user_reco[uid] = paper_ids
+
+            if not paper_map:
+                logger.warning("没有可生成博客的论文（可能缺少pdf_url）")
+                return {
+                    "message": "no papers to generate",
+                    "users": len(users),
+                    "papers": 0,
+                    "generated": 0,
+                    "saved_pairs": 0,
+                    "failed_generate": 0,
+                    "failed_save": 0,
+                }
+
+            logger.info(
+                f"为 {len(users)} 位用户准备生成博客，独立论文数 {len(paper_map)}，每用户topk={topk_per_user}"
+            )
+
+            blog_generator = BlogGenerator()
+            blog_map: Dict[int, str] = {}
+            failed_generate = 0
+
+            def _gen_one(paper: Dict[str, Any]) -> Dict[str, Any]:
+                pid = paper["paper_id"]
+                title = paper.get("title", "")
+                pdf_url = paper.get("pdf_url", "")
+                try:
+                    content = blog_generator.generate_from_pdf_url(pdf_url)
+                    return {"paper_id": pid, "content": content, "status": "ok"}
+                except Exception as e:
+                    logger.error(f"生成论文{pid}:{title[:40]}的博客失败: {e}")
+                    return {"paper_id": pid, "status": "fail", "err": str(e)}
+
+            with ThreadPoolExecutor(max_workers=max_workers or 1) as executor:
+                futures = {executor.submit(_gen_one, p): p for p in paper_map.values()}
+                for fut in as_completed(futures):
+                    res = fut.result()
+                    if res.get("status") == "ok":
+                        blog_map[res["paper_id"]] = res["content"]
+                    else:
+                        failed_generate += 1
+
+            saved_pairs = 0
+            failed_save = 0
+            for uid, pids in user_reco.items():
+                for pid in pids:
+                    content = blog_map.get(pid)
+                    if not content:
+                        continue
+                    try:
+                        self.db.execute(
+                            """
+                            INSERT INTO recommendations (user_id, paper_id, blog)
+                            VALUES (%s, %s, %s)
+                            ON DUPLICATE KEY UPDATE blog = VALUES(blog), created_at = CURRENT_TIMESTAMP
+                            """,
+                            (uid, pid, content),
+                        )
+                        saved_pairs += 1
+                    except Exception as e:
+                        failed_save += 1
+                        logger.error(f"保存 user_id={uid}, paper_id={pid} 到 recommendations 失败: {e}")
+
+            return {
+                "message": "ok",
+                "users": len(users),
+                "papers": len(paper_map),
+                "generated": len(blog_map),
+                "saved_pairs": saved_pairs,
+                "failed_generate": failed_generate,
+                "failed_save": failed_save,
+            }
+
+        except Exception as e:
+            logger.error(f"为所有用户生成博客失败: {e}", exc_info=True)
+            return {
+                "message": f"error: {e}",
+                "users": 0,
+                "papers": 0,
+                "generated": 0,
+                "saved_pairs": 0,
+                "failed_generate": 0,
+                "failed_save": 0,
+            }
+
+    def list_recommendations(
+        self,
+        user_id: Optional[int] = None,
+        limit: int = 20,
+    ) -> List[Dict[str, Any]]:
+        """
+        获取推荐博客列表，可按用户过滤。
+        """
+        try:
+            params: List[Any] = []
+            where = ""
+            if user_id is not None:
+                where = "WHERE r.user_id = %s"
+                params.append(user_id)
+
+            sql = f"""
+                SELECT
+                    r.user_id,
+                    r.paper_id,
+                    r.blog,
+                    r.created_at,
+                    p.title,
+                    p.abstract,
+                    p.author,
+                    p.pdf_url,
+                    pl.user_id AS liked_user
+                FROM recommendations r
+                JOIN papers p ON r.paper_id = p.paper_id
+                LEFT JOIN paper_liked pl
+                  ON pl.paper_id = r.paper_id
+                 AND (%s IS NOT NULL AND pl.user_id = %s)
+                {where}
+                ORDER BY r.created_at DESC
+                LIMIT %s
+            """
+            # need user_id twice for join placeholder even if None
+            params_with_like = []
+            params_with_like.extend(params if user_id is None else params)  # params already contains user_id if set
+            params_with_like.extend([user_id, user_id])
+            params_with_like.append(limit)
+            rows = self.db.query_all(sql, tuple(params_with_like))
+            # 转换 datetime 为字符串，避免 JSON 序列化报错
+            for r in rows:
+                ts = r.get("created_at")
+                if ts is not None:
+                    r["created_at"] = ts.isoformat() if hasattr(ts, "isoformat") else str(ts)
+                r["liked"] = bool(r.get("liked_user"))
+                r.pop("liked_user", None)
+            return rows
+        except Exception as e:
+            logger.error(f"获取recommendations失败: {e}", exc_info=True)
+            return []
+
+    # --- 点赞/收藏 ---
+    def like_paper(self, user_id: int, paper_id: int) -> bool:
+        try:
+            # 校验用户、论文是否存在，避免外键错误
+            user_exists = self.db.query_one("SELECT user_id FROM users WHERE user_id = %s", (user_id,))
+            paper_exists = self.db.query_one("SELECT paper_id FROM papers WHERE paper_id = %s", (paper_id,))
+            if not user_exists or not paper_exists:
+                logger.error(f"收藏失败: user或paper不存在 user_id={user_id}, paper_id={paper_id}")
+                return False
+
+            self.db.execute(
+                """
+                INSERT INTO paper_liked (user_id, paper_id)
+                VALUES (%s, %s)
+                ON DUPLICATE KEY UPDATE created_at = CURRENT_TIMESTAMP
+                """,
+                (user_id, paper_id),
+            )
+            return True
+        except Exception as e:
+            logger.error(f"收藏失败 user_id={user_id}, paper_id={paper_id}: {e}")
+            return False
+
+    def unlike_paper(self, user_id: int, paper_id: int) -> bool:
+        try:
+            # 同样先校验存在性，保持一致
+            user_exists = self.db.query_one("SELECT user_id FROM users WHERE user_id = %s", (user_id,))
+            paper_exists = self.db.query_one("SELECT paper_id FROM papers WHERE paper_id = %s", (paper_id,))
+            if not user_exists or not paper_exists:
+                logger.error(f"取消收藏失败: user或paper不存在 user_id={user_id}, paper_id={paper_id}")
+                return False
+
+            self.db.execute(
+                "DELETE FROM paper_liked WHERE user_id = %s AND paper_id = %s",
+                (user_id, paper_id),
+            )
+            return True
+        except Exception as e:
+            logger.error(f"取消收藏失败 user_id={user_id}, paper_id={paper_id}: {e}")
+            return False
+
+    def list_liked(
+        self,
+        user_id: int,
+        limit: int = 50,
+    ) -> List[Dict[str, Any]]:
+        """
+        获取指定用户的收藏列表，附带论文信息与可用的博客内容（若存在）。
+        """
+        try:
+            sql = """
+                SELECT
+                    pl.user_id,
+                    pl.paper_id,
+                    pl.created_at AS liked_at,
+                    p.title,
+                    p.abstract,
+                    p.author,
+                    p.pdf_url,
+                    r.blog,
+                    r.created_at AS blog_created_at
+                FROM paper_liked pl
+                JOIN papers p ON pl.paper_id = p.paper_id
+                LEFT JOIN recommendations r
+                  ON r.paper_id = pl.paper_id
+                 AND r.user_id = pl.user_id
+                WHERE pl.user_id = %s
+                ORDER BY pl.created_at DESC
+                LIMIT %s
+            """
+            rows = self.db.query_all(sql, (user_id, limit))
+            for r in rows:
+                for k in ("liked_at", "blog_created_at"):
+                    ts = r.get(k)
+                    if ts is not None:
+                        r[k] = ts.isoformat() if hasattr(ts, "isoformat") else str(ts)
+                r["liked"] = True
+            return rows
+        except Exception as e:
+            logger.error(f"获取收藏列表失败: {e}", exc_info=True)
+            return []
 
 
 __all__ = ["RecommendationOrchestrator"]
