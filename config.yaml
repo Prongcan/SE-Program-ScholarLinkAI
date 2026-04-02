@@ -18,7 +18,7 @@ database:
   port: 3306
   name: scholarlink_ai
   user: root
-  password: "Sehun19940412"
+  password: "111111"
   charset: utf8mb4
 
 jwt:

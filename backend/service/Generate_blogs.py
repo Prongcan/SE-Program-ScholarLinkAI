@@ -242,16 +242,47 @@ class BlogGenerator:
             raise RuntimeError("未能从该 PDF 中提取到文本")
         # 3) 分段
         chunks = _chunk(text, size=8000)
-        # 4) 逐段要点
-        points: List[str] = []
-        for ch in chunks:
-            msgs = _chunk_prompt(ch, lang=self.language)
-            r = self.client.chat.completions.create(model=self.model, messages=msgs, temperature=0.3)
-            points.append(r.choices[0].message.content.strip())
-        merged = "\n\n".join(points)
-        # 5) 成文
-        final_msgs = _final_prompt(merged, pdf_url, lang=self.language)
-        final = self.client.chat.completions.create(model=self.model, messages=final_msgs, temperature=0.4)
+        # 仅使用第一个分块，直接单次成文调用（牺牲完整性，减少调用次数）
+        chunk_text = (chunks[:1] or [""])[0]
+        if not chunk_text:
+            raise RuntimeError("未能获取首个文本分块")
+
+        # 单轮提示：直接让模型基于首块文本生成博客
+        if self.language.lower().startswith("zh"):
+            user_prompt = f"""
+        请阅读以下论文片段（可能不完整），直接生成一篇可发布的中文技术博客（Markdown）：
+        原文链接：{pdf_url}
+
+        片段：
+        {chunk_text}
+
+        写作要求：
+        - 面向有一定基础的工程师与研究生
+        - 结构包含：摘要与核心贡献、背景与动机、方法原理、实验与结果解读、局限与改进、应用场景、相关工作、TL;DR（3-5条）
+        - 语言通俗准确，避免空话，正文不超过1500字
+        """
+        else:
+            user_prompt = f"""
+        Read the following (possibly partial) paper chunk and write a publishable technical blog in Markdown:
+        Link: {pdf_url}
+
+        Chunk:
+        {chunk_text}
+
+        Sections: summary/contribution, background, method, experiments/results, limitations, applications, related work, TL;DR (3-5 bullets).
+        Keep concise (<=1500 words).
+        """
+
+        messages = [
+            {"role": "system", "content": _sys_prompt(self.language)},
+            {"role": "user", "content": user_prompt},
+        ]
+
+        final = self.client.chat.completions.create(
+            model=self.model,
+            messages=messages,
+            temperature=0.4,
+        )
         return final.choices[0].message.content.strip()
 
 

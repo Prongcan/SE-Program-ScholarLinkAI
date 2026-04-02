@@ -12,6 +12,9 @@ from config import Config
 from api_router.hello_routes import hello_bp
 from api_router.papers_routes import papers_ns
 from api_router.users_routes import users_ns
+from api_router.RecommendationOrchestrator import recommendation_ns
+from api_router.FetchOrchestrator import fetch_ns
+from api_router.chat_routes import chat_ns
 
 def create_app():
     """创建Flask应用实例"""
@@ -46,6 +49,12 @@ def create_app():
                     'list': '/users/list',
                     'detail': '/users/<user_id>'
                 },
+                'recommendationOrchestrator': '/recommendationOrchestrator/',
+                'fetchOrchestrator': '/fetchOrchestrator/',
+                'chat': {
+                    'history': '/chat/history/<recommendation_id>',
+                    'send': '/chat/send'
+                },
                 'health': '/health'
             },
             'description': '访问 /docs/ 查看完整的 Swagger API 文档'
@@ -66,9 +75,18 @@ def create_app():
     
     # 注册 papers 命名空间
     api.add_namespace(papers_ns, path='/papers')
-    
+
     # 注册 users 命名空间
     api.add_namespace(users_ns, path='/users')
+
+    # 注册 recommendationOrchestrator 命名空间
+    api.add_namespace(recommendation_ns, path='/recommendationOrchestrator')
+
+    # 注册 fetchOrchestrator 命名空间
+    api.add_namespace(fetch_ns, path='/fetchOrchestrator')
+
+    # 注册 chat 命名空间
+    api.add_namespace(chat_ns, path='/chat')
     
     # 定义数据模型
     hello_model = api.model('HelloResponse', {

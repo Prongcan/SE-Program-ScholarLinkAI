@@ -179,19 +179,10 @@ def create_tables() -> None:
                     `user_id` INT AUTO_INCREMENT PRIMARY KEY,
                     `username` VARCHAR(100) NOT NULL UNIQUE,
                     `password` VARCHAR(255) NOT NULL,
-                    `interest` VARCHAR(255),
-                    `interest_embedding` TEXT
+                    `interest` VARCHAR(255)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
                 """
             )
-            
-            # 检查并添加interest_embedding字段（如果表已存在但字段不存在）
-            try:
-                cur.execute("ALTER TABLE `users` ADD COLUMN `interest_embedding` TEXT")
-                print("[INFO] 已添加 interest_embedding 字段到 users 表")
-            except Exception:
-                # 字段已存在，忽略错误
-                pass
 
             # recommendations 表
             cur.execute(
@@ -208,6 +199,74 @@ def create_tables() -> None:
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
                 """
             )
+
+            # paper_embeddings 表
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS `paper_embeddings` (
+                    `paper_id` INT PRIMARY KEY,
+                    `embedding` TEXT NOT NULL,
+                    CONSTRAINT `fk_paper_emb` FOREIGN KEY (`paper_id`) REFERENCES `papers`(`paper_id`) ON DELETE CASCADE
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+                """
+            )
+
+            # interest_embeddings 表
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS `interest_embeddings` (
+                    `user_id` INT PRIMARY KEY,
+                    `embedding` LONGTEXT NOT NULL,
+                    CONSTRAINT `fk_interest_emb` FOREIGN KEY (`user_id`) REFERENCES `users`(`user_id`) ON DELETE CASCADE
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+                """
+            )
+
+            # paper_liked 表
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS `paper_liked` (
+                    `user_id` INT NOT NULL,
+                    `paper_id` INT NOT NULL,
+                    `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (`user_id`, `paper_id`),
+                    CONSTRAINT `fk_like_user` FOREIGN KEY (`user_id`) REFERENCES `users`(`user_id`) ON DELETE CASCADE,
+                    CONSTRAINT `fk_like_paper` FOREIGN KEY (`paper_id`) REFERENCES `papers`(`paper_id`) ON DELETE CASCADE
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+                """
+            )
+
+            # chat_history 表
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS `chat_history` (
+                    `id` INT AUTO_INCREMENT PRIMARY KEY,
+                    `recommendation_id` INT NOT NULL,
+                    `user_message` TEXT NOT NULL,
+                    `ai_response` TEXT NOT NULL,
+                    `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    CONSTRAINT `fk_chat_reco` FOREIGN KEY (`recommendation_id`) REFERENCES `recommendations`(`id`) ON DELETE CASCADE,
+                    INDEX `idx_recommendation_id` (`recommendation_id`),
+                    INDEX `idx_created_at` (`created_at`)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+                """
+            )
+
+            # 检查并升级embedding字段类型（如果表已存在但字段类型不匹配）
+            try:
+                cur.execute("ALTER TABLE `paper_embeddings` MODIFY COLUMN `embedding` LONGTEXT NOT NULL")
+                print("[INFO] 已升级 paper_embeddings.embedding 字段为 LONGTEXT")
+            except Exception:
+                # 字段类型已正确或升级失败，忽略错误
+                pass
+
+            try:
+                cur.execute("ALTER TABLE `interest_embeddings` MODIFY COLUMN `embedding` LONGTEXT NOT NULL")
+                print("[INFO] 已升级 interest_embeddings.embedding 字段为 LONGTEXT")
+            except Exception:
+                # 字段类型已正确或升级失败，忽略错误
+                pass
+
     print("[OK] 数据表已准备就绪")
 
 

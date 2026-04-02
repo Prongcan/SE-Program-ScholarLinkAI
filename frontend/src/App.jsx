@@ -6,6 +6,7 @@ import Favorites from './pages/Favorites'
 import Profile from './pages/Profile'
 import Login from './pages/Login'
 import Register from './pages/Register'
+import Chat from './pages/Chat'
 import './App.css'
 
 function App() {
@@ -35,6 +36,7 @@ function App() {
             <Route path="/explore" element={<Explore />} />
             <Route path="/favorites" element={<Favorites isLoggedIn={isLoggedIn} />} />
             <Route path="/profile" element={<Profile isLoggedIn={isLoggedIn} />} />
+            <Route path="/chat/:recommendationId" element={<Chat />} />
             <Route path="/login" element={<Login onLogin={handleLogin} />} />
             <Route path="/register" element={<Register onRegister={handleLogin} />} />
           </Routes>

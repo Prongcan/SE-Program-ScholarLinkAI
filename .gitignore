@@ -55,4 +55,3 @@ config.yaml
 
 # Optional: ignore package markers (you requested to ignore __init__)
 **/__init__.py
-
