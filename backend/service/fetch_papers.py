@@ -6,6 +6,7 @@ Paper Fetching Service
 import arxiv
 import time
 import json
+import re
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 import logging
@@ -92,6 +93,50 @@ class PaperFetchService:
             logger.error(f"抓取论文时出错: {str(e)}")
             raise
     
+    def fetch_papers_by_query(self, query_text: str, max_results: int = 10) -> List[Dict]:
+        """
+        Fetch papers from arXiv by user interest keywords, then store papers and embeddings.
+        """
+        terms = self._extract_query_terms(query_text)
+        if not terms:
+            logger.warning("用户偏好为空，跳过按偏好抓取论文")
+            return []
+
+        query = " OR ".join(f'all:"{term}"' for term in terms)
+        logger.info(f"按用户偏好抓取论文: query={query}, max_results={max_results}")
+
+        search = arxiv.Search(
+            query=query,
+            max_results=max_results,
+            sort_by=arxiv.SortCriterion.Relevance
+        )
+
+        try:
+            results_list = list(self.client.results(search))
+            logger.info(f"按偏好搜索到 {len(results_list)} 篇论文")
+
+            papers = self._parse_papers(results_list)
+            stored_count = self._store_papers_and_compute_embeddings(papers)
+            logger.info(f"按偏好存储并计算embedding: {stored_count}/{len(papers)} 篇论文")
+
+            return papers
+        except Exception as e:
+            logger.error(f"按偏好抓取论文失败: {str(e)}")
+            raise
+
+    def _extract_query_terms(self, query_text: str) -> List[str]:
+        parts = re.split(r"[,;，；\n]+", query_text or "")
+        terms = []
+        for part in parts:
+            term = re.sub(r'\s+', ' ', part.strip().strip('"')).strip()
+            if term:
+                terms.append(term)
+
+        if not terms and query_text:
+            terms = [re.sub(r'\s+', ' ', query_text.strip().strip('"')).strip()]
+
+        return terms[:5]
+
     def _parse_papers(self, results_list: List) -> List[Dict]:
         """
         解析论文结果列表，提取元数据

@@ -13,6 +13,7 @@ import hashlib
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from service.dbmanager import DbManager
+from service.fetch_papers import PaperFetchService
 from orchestrator.recommendation_orchestrator import RecommendationOrchestrator
 
 # 配置日志
@@ -60,6 +61,35 @@ def hash_password(password: str) -> str:
 def verify_password(password: str, hashed: str) -> bool:
     """验证密码"""
     return hash_password(password) == hashed
+
+
+def refresh_user_recommendations(orchestrator: RecommendationOrchestrator, user_id: int, interest: str, topk: int = 3):
+    fetch_result = None
+    try:
+        fetched_papers = PaperFetchService().fetch_papers_by_query(interest, max_results=10)
+        fetch_result = {
+            "fetched": len(fetched_papers),
+            "query": interest,
+        }
+    except Exception as e:
+        fetch_result = {
+            "fetched": 0,
+            "query": interest,
+            "error": str(e),
+        }
+        logger.warning(f"用户 {user_id} 按偏好抓取论文失败: {str(e)}")
+
+    result = orchestrator.generate_blogs_for_all_users(
+        topk_per_user=topk,
+        max_workers=2,
+        user_id=user_id,
+    )
+    logger.info(
+        f"用户 {user_id} 推荐刷新完成: saved_pairs={result.get('saved_pairs', 0)}, "
+        f"generated={result.get('generated', 0)}"
+    )
+    result["paper_fetch"] = fetch_result
+    return result
 
 
 @users_ns.route('/login')
@@ -208,12 +238,14 @@ class UserRegister(Resource):
             user_id = result['lastrowid']
             logger.info(f"用户注册成功: {username} (ID={user_id})")
             
+            recommendation_result = None
             # 如果提供了兴趣，触发生成embedding
             if interest:
                 try:
                     orchestrator = RecommendationOrchestrator()
-                    orchestrator.update_user_interest_embedding(user_id, interest)
-                    logger.info(f"用户 {user_id} 兴趣embedding初始化成功")
+                    if orchestrator.update_user_interest_embedding(user_id, interest):
+                        recommendation_result = refresh_user_recommendations(orchestrator, user_id, interest)
+                        logger.info(f"用户 {user_id} 兴趣embedding初始化成功")
                 except Exception as e:
                     logger.warning(f"初始化用户兴趣embedding时出错: {str(e)}")
                     # 不影响注册流程
@@ -225,7 +257,8 @@ class UserRegister(Resource):
                 'data': {
                     'user_id': user_id,
                     'username': username,
-                    'interest': interest
+                    'interest': interest,
+                    'recommendation_refresh': recommendation_result
                 }
             }
             
@@ -343,11 +376,13 @@ class UserInterest(Resource):
             
             logger.info(f"用户 {user_id} 兴趣更新成功: {interest}")
             
-            # 触发更新兴趣的embedding（异步处理，不阻塞主流程）
+            recommendation_result = None
+            # 触发更新兴趣embedding，并刷新推荐表
             try:
                 orchestrator = RecommendationOrchestrator()
                 embedding_updated = orchestrator.update_user_interest_embedding(user_id, interest)
                 if embedding_updated:
+                    recommendation_result = refresh_user_recommendations(orchestrator, user_id, interest)
                     logger.info(f"用户 {user_id} 兴趣embedding更新成功")
                 else:
                     logger.warning(f"用户 {user_id} 兴趣embedding更新失败（可能是配额限制，稍后会自动重试）")
@@ -370,7 +405,8 @@ class UserInterest(Resource):
                 'data': {
                     'user_id': user_id,
                     'interest': interest,
-                    'updated_rows': result['rowcount']
+                    'updated_rows': result['rowcount'],
+                    'recommendation_refresh': recommendation_result
                 }
             }
             

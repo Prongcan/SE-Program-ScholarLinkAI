@@ -2,9 +2,10 @@
 Initialize MySQL database and create tables according to README schema.
 
 Priority of configuration sources (highest first):
-1) config.yaml (project root) -> database section
+1) Runtime password entered during initialization
 2) Environment variables / .env
-3) Built-in sensible defaults for MySQL
+3) config.yaml (project root) -> database section
+4) Built-in sensible defaults for MySQL
 
 Tables:
 - papers(paper_id, abstract, pdf_url, title, author)
@@ -23,11 +24,16 @@ Environment variables (used when config.yaml is absent or missing keys):
 
 Note:
 - This script uses PyMySQL to talk to MySQL and PyYAML to read config.yaml
-- You can also use a .env file. Values in config.yaml override .env/env vars.
+- You can also use a .env file. Environment variables override config.yaml.
 """
 from __future__ import annotations
 
 import os
+import hashlib
+import base64
+import json
+import sys
+from getpass import getpass
 from typing import Optional, Dict, Any
 
 try:
@@ -42,6 +48,11 @@ except Exception:
     yaml = None  # 延迟报错，允许无 YAML 时继续使用环境变量
 
 from pymysql.cursors import DictCursor
+
+_PASSWORD_OVERRIDE: Optional[str] = None
+TEST_USERNAME = "test"
+TEST_PASSWORD = "test123456"
+TEST_INTEREST = "Machine Learning, Deep Learning, Natural Language Processing, Computer Vision"
 
 # 尝试从项目根目录加载 .env（若存在）
 try:
@@ -120,7 +131,134 @@ def _get_db_conf() -> dict:
     except Exception as e:
         print(f"[WARN] 读取 config.yaml 失败，改用环境变量: {e}")
 
+    # Let local .env / environment variables override config.yaml for private credentials.
+    conf.update({
+        "host": os.getenv("DATABASE_HOST", conf["host"]),
+        "port": int(os.getenv("DATABASE_PORT", str(conf["port"]))),
+        "database": os.getenv("DATABASE_NAME", conf["database"]),
+        "user": os.getenv("DATABASE_USER", conf["user"]),
+        "password": os.getenv("DATABASE_PASSWORD", conf["password"]),
+    })
+    encoded_password = os.getenv("DATABASE_PASSWORD_B64")
+    if encoded_password:
+        conf["password"] = base64.b64decode(encoded_password).decode("utf-8")
+
+    if _PASSWORD_OVERRIDE is not None:
+        conf["password"] = _PASSWORD_OVERRIDE
+
     return conf
+
+
+def _is_access_denied(error: pymysql.err.OperationalError) -> bool:
+    return bool(error.args and error.args[0] == 1045)
+
+
+def _prompt_for_mysql_password(user: str) -> str:
+    print("[INFO] MySQL access denied. The configured password may be incorrect.")
+    return getpass(f"Enter MySQL password for user '{user}': ")
+
+
+def _project_root() -> str:
+    return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+
+
+def _set_env_value(path: str, key: str, value: str) -> None:
+    lines = []
+    if os.path.isfile(path):
+        with open(path, "r", encoding="utf-8") as f:
+            lines = f.read().splitlines()
+
+    prefix = f"{key}="
+    escaped_value = value.replace("\\", "\\\\").replace('"', '\\"')
+    replacement = f'{key}="{escaped_value}"'
+    for index, line in enumerate(lines):
+        if line.startswith(prefix):
+            lines[index] = replacement
+            break
+    else:
+        lines.append(replacement)
+
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+
+
+def _remove_env_value(path: str, key: str) -> None:
+    if not os.path.isfile(path):
+        return
+
+    prefix = f"{key}="
+    with open(path, "r", encoding="utf-8") as f:
+        lines = [line for line in f.read().splitlines() if not line.startswith(prefix)]
+
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + ("\n" if lines else ""))
+
+
+def _offer_to_save_password(password: str) -> None:
+    answer = input("Save this MySQL password to local .env for backend runs? [y/N]: ").strip().lower()
+    if answer not in {"y", "yes"}:
+        return
+
+    env_path = os.path.join(_project_root(), ".env")
+    encoded_password = base64.b64encode(password.encode("utf-8")).decode("ascii")
+    _set_env_value(env_path, "DATABASE_PASSWORD_B64", encoded_password)
+    _remove_env_value(env_path, "DATABASE_PASSWORD")
+    print(f"[INFO] Saved DATABASE_PASSWORD_B64 to {env_path}. This file is ignored by git.")
+
+
+def _hash_password(password: str) -> str:
+    return hashlib.sha256(password.encode()).hexdigest()
+
+
+def seed_test_user() -> Optional[int]:
+    conf = _get_db_conf()
+    with _connect(db=conf["database"]) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO users (username, password, interest)
+                VALUES (%s, %s, %s)
+                ON DUPLICATE KEY UPDATE
+                    password = VALUES(password),
+                    interest = VALUES(interest)
+                """,
+                (TEST_USERNAME, _hash_password(TEST_PASSWORD), TEST_INTEREST),
+            )
+            cur.execute("SELECT user_id FROM users WHERE username = %s", (TEST_USERNAME,))
+            row = cur.fetchone()
+            if not row:
+                raise RuntimeError("test user was not found after insert/update")
+
+            user_id = row["user_id"]
+
+    print(f"[OK] Test user ready: username={TEST_USERNAME}, password={TEST_PASSWORD}, user_id={user_id}")
+    seed_test_user_interest_embedding(user_id)
+    return user_id
+
+
+def seed_test_user_interest_embedding(user_id: int) -> None:
+    backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    if backend_dir not in sys.path:
+        sys.path.append(backend_dir)
+
+    try:
+        from service.openrouter_embedding import OpenRouterEmbedding
+
+        embedding = OpenRouterEmbedding().embed_text(TEST_INTEREST, normalize=True)
+        conf = _get_db_conf()
+        with _connect(db=conf["database"]) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO interest_embeddings (user_id, embedding)
+                    VALUES (%s, %s)
+                    ON DUPLICATE KEY UPDATE embedding = VALUES(embedding)
+                    """,
+                    (user_id, json.dumps(embedding)),
+                )
+        print("[OK] Test user interest embedding ready.")
+    except Exception as e:
+        print(f"[WARN] Test user interest embedding was not updated: {e}")
 
 
 def _connect(db: Optional[str] = None) -> pymysql.connections.Connection:
@@ -271,6 +409,7 @@ def create_tables() -> None:
 
 
 def init_database() -> None:
+    global _PASSWORD_OVERRIDE
     conf = _get_db_conf()
     masked_pwd = "***" if conf["password"] else "(empty)"
     print("-" * 60)
@@ -283,8 +422,21 @@ def init_database() -> None:
     try:
         create_database_if_not_exists()
         create_tables()
+        seed_test_user()
         print("[SUCCESS] 数据库初始化完成 ✅")
     except pymysql.err.OperationalError as e:
+        if _PASSWORD_OVERRIDE is None and _is_access_denied(e):
+            _PASSWORD_OVERRIDE = _prompt_for_mysql_password(conf["user"])
+            try:
+                create_database_if_not_exists()
+                create_tables()
+                seed_test_user()
+                _offer_to_save_password(_PASSWORD_OVERRIDE)
+                print("[SUCCESS] Database initialized with the password entered in this session.")
+                return
+            except pymysql.err.OperationalError as retry_error:
+                e = retry_error
+
         print(
             f"[ERROR] 无法连接到 MySQL: {e}\n\n"
             f"请检查: \n"

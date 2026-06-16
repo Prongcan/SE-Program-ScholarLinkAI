@@ -2,8 +2,8 @@
 DbManager - Simple MySQL access helper using PyMySQL.
 
 Configuration precedence (highest first):
-1) config.yaml at project root (database section)
-2) Environment variables / .env
+1) Environment variables / .env
+2) config.yaml at project root (database section)
 3) Built-in MySQL defaults
 
 Environment variables (when config.yaml is absent or partial):
@@ -28,6 +28,7 @@ Example:
 from __future__ import annotations
 
 import os
+import base64
 from contextlib import contextmanager
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
@@ -116,6 +117,18 @@ def _resolve_db_conf() -> Dict[str, Any]:
                 conf["charset"] = db.get("charset", conf["charset"]) or conf["charset"]
     except Exception as e:  # pragma: no cover
         print(f"[WARN] 读取 config.yaml 失败，改用环境变量: {e}")
+
+    # Let local .env / environment variables override config.yaml for private credentials.
+    conf.update({
+        "host": os.getenv("DATABASE_HOST", conf["host"]),
+        "port": int(os.getenv("DATABASE_PORT", str(conf["port"]))),
+        "database": os.getenv("DATABASE_NAME", conf["database"]),
+        "user": os.getenv("DATABASE_USER", conf["user"]),
+        "password": os.getenv("DATABASE_PASSWORD", conf["password"]),
+    })
+    encoded_password = os.getenv("DATABASE_PASSWORD_B64")
+    if encoded_password:
+        conf["password"] = base64.b64decode(encoded_password).decode("utf-8")
 
     return conf
 

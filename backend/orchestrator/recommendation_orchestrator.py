@@ -597,6 +597,7 @@ class RecommendationOrchestrator:
         self,
         topk_per_user: int = 3,
         max_workers: int = 4,
+        user_id: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
         为所有有兴趣embedding的用户生成推荐博客并写入 recommendations 表。
@@ -608,12 +609,20 @@ class RecommendationOrchestrator:
         4) 将生成结果写入 recommendations（ON DUPLICATE KEY UPDATE）
         """
         try:
+            params = ()
+            where = ""
+            if user_id is not None:
+                where = "WHERE u.user_id = %s"
+                params = (user_id,)
+
             users = self.db.query_all(
-                """
+                f"""
                 SELECT u.user_id
                 FROM users u
                 JOIN interest_embeddings ie ON u.user_id = ie.user_id
-                """
+                {where}
+                """,
+                params,
             )
             if not users:
                 logger.warning("没有找到带兴趣embedding的用户")

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
+import Toast from '../components/Toast'
 import './Explore.css'
 
 const truncate = (text = '', len = 120) => {
@@ -7,66 +8,121 @@ const truncate = (text = '', len = 120) => {
   return text.length > len ? `${text.slice(0, len)}...` : text
 }
 
-const Explore = () => {
+const mapRecommendation = (r, idx) => ({
+  id: `${r.user_id}-${r.paper_id}-${idx}`,
+  recommendation_id: r.id,
+  user_id: r.user_id,
+  paper_id: r.paper_id,
+  title: r.title || '无标题',
+  author: truncate(r.author || '未知作者', 40),
+  date: (r.created_at || '').slice(0, 10) || new Date().toISOString().split('T')[0],
+  summary: truncate(r.abstract || '暂无摘要', 180),
+  blog_content: r.blog || '',
+  pdf_url: r.pdf_url,
+  liked: !!r.liked
+})
+
+const mapSearchResult = (r, idx) => ({
+  id: `s-${r.paper_id}-${idx}`,
+  recommendation_id: r.id,
+  user_id: r.blog_user_id,
+  paper_id: r.paper_id,
+  title: r.title || '无标题',
+  author: truncate(r.author || '未知作者', 40),
+  date: new Date().toISOString().split('T')[0],
+  summary: truncate(r.abstract || '暂无摘要', 180),
+  blog_content: r.blog || '',
+  pdf_url: r.pdf_url,
+  liked: false
+})
+
+const recordBlogRead = (uid, paperId) => {
+  if (!uid || !paperId) return
+  const key = `scholarlink_read_history_${uid}`
+  const current = JSON.parse(localStorage.getItem(key) || '[]')
+  const next = Array.from(new Set([...current, paperId]))
+  localStorage.setItem(key, JSON.stringify(next))
+}
+
+const LoadingState = () => (
+  <div className="explore-loading-shell">
+    <div className="loading-panel">
+      <div className="loading-orbit">
+        <div className="loading-spinner"></div>
+      </div>
+      <div>
+        <p className="loading-kicker">ScholarLink AI</p>
+        <h2>正在加载推荐博客...</h2>
+        <p>正在为你匹配论文摘要、AI 博客和可对话的研究材料。</p>
+      </div>
+    </div>
+    <div className="loading-skeleton-grid" aria-hidden="true">
+      {[0, 1, 2].map(item => (
+        <div className="skeleton-card" key={item}>
+          <div className="skeleton-line wide"></div>
+          <div className="skeleton-line"></div>
+          <div className="skeleton-line short"></div>
+          <div className="skeleton-actions">
+            <span></span>
+            <span></span>
+          </div>
+        </div>
+      ))}
+    </div>
+  </div>
+)
+
+const Explore = ({ isLoggedIn }) => {
   const navigate = useNavigate()
   const [blogs, setBlogs] = useState([])
   const [loading, setLoading] = useState(true)
   const [userId, setUserId] = useState(null)
   const [query, setQuery] = useState('')
   const [isSearching, setIsSearching] = useState(false)
+  const [toast, setToast] = useState({ message: '', type: 'success' })
 
-  // 从推荐表获取当前用户/默认的推荐博客
-  useEffect(() => {
-    const fetchRecommendations = async () => {
-      setLoading(true)
-      try {
-        const userStr = localStorage.getItem('user')
-        let uid = null
-        if (userStr) {
-          try {
-            const u = JSON.parse(userStr)
-            uid = u?.user_id
-            setUserId(uid || null)
-          } catch (e) {
-            console.warn('解析用户信息失败', e)
-          }
-        }
+  const showToast = (message, type = 'success') => {
+    setToast({ message, type })
+  }
 
-        const params = new URLSearchParams()
-        params.append('limit', '20')
-        if (uid) params.append('user_id', uid)
+  const fetchRecommendations = async (uid = userId) => {
+    setLoading(true)
+    try {
+      const params = new URLSearchParams()
+      params.append('limit', uid ? '20' : '3')
+      if (uid) params.append('user_id', uid)
 
-        const response = await fetch(`http://localhost:3001/recommendationOrchestrator/list?${params.toString()}`)
-        const data = await response.json()
+      const response = await fetch(`http://localhost:3001/recommendationOrchestrator/list?${params.toString()}`)
+      const data = await response.json()
 
-        if (response.ok && data.status === 'success' && data.data?.recommendations) {
-          const recs = data.data.recommendations.map((r, idx) => ({
-            id: `${r.user_id}-${r.paper_id}-${idx}`,
-            recommendation_id: r.id, // 添加recommendation_id
-            user_id: r.user_id,
-            paper_id: r.paper_id,
-            title: r.title || '无标题',
-            author: truncate(r.author || '未知作者', 40),
-            date: (r.created_at || '').slice(0, 10) || new Date().toISOString().split('T')[0],
-            summary: truncate(r.abstract || '暂无摘要', 180),
-            blog_content: r.blog || '',
-            pdf_url: r.pdf_url,
-            liked: !!r.liked
-          }))
-          setBlogs(recs)
-        } else {
-          setBlogs([])
-        }
-      } catch (err) {
-        console.error('获取推荐博客失败:', err)
+      if (response.ok && data.status === 'success' && data.data?.recommendations) {
+        setBlogs(data.data.recommendations.map(mapRecommendation))
+      } else {
         setBlogs([])
-      } finally {
-        setLoading(false)
+      }
+    } catch (err) {
+      console.error('获取推荐博客失败:', err)
+      setBlogs([])
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    const userStr = isLoggedIn ? localStorage.getItem('user') : null
+    let uid = null
+    if (userStr) {
+      try {
+        const u = JSON.parse(userStr)
+        uid = u?.user_id
+      } catch (e) {
+        console.warn('解析用户信息失败', e)
       }
     }
+    setUserId(uid || null)
 
-    fetchRecommendations()
-  }, [])
+    fetchRecommendations(uid)
+  }, [isLoggedIn])
 
   const fetchSearch = async () => {
     if (!query.trim()) {
@@ -82,20 +138,7 @@ const Explore = () => {
       const resp = await fetch(`http://localhost:3001/recommendationOrchestrator/search?${params.toString()}`)
       const data = await resp.json()
       if (resp.ok && data.status === 'success' && data.data?.results) {
-        const recs = data.data.results.map((r, idx) => ({
-          id: `s-${r.paper_id}-${idx}`,
-          recommendation_id: r.id, // 添加recommendation_id
-          user_id: r.blog_user_id,
-          paper_id: r.paper_id,
-          title: r.title || '无标题',
-          author: truncate(r.author || '未知作者', 40),
-          date: new Date().toISOString().split('T')[0],
-          summary: truncate(r.abstract || '暂无摘要', 180),
-          blog_content: r.blog || '',
-          pdf_url: r.pdf_url,
-          liked: false
-        }))
-        setBlogs(recs)
+        setBlogs(data.data.results.map(mapSearchResult))
       } else {
         setBlogs([])
       }
@@ -110,85 +153,282 @@ const Explore = () => {
   const resetToRecommend = async () => {
     setQuery('')
     setIsSearching(false)
-    // 重新获取推荐
-    setLoading(true)
-    try {
-      const params = new URLSearchParams()
-      params.append('limit', '20')
-      if (userId) params.append('user_id', userId)
-      const response = await fetch(`http://localhost:3001/recommendationOrchestrator/list?${params.toString()}`)
-      const data = await response.json()
-      if (response.ok && data.status === 'success' && data.data?.recommendations) {
-        const recs = data.data.recommendations.map((r, idx) => ({
-          id: `${r.user_id}-${r.paper_id}-${idx}`,
-          recommendation_id: r.id, // 添加recommendation_id
-          user_id: r.user_id,
-          paper_id: r.paper_id,
-          title: r.title || '无标题',
-          author: truncate(r.author || '未知作者', 40),
-          date: (r.created_at || '').slice(0, 10) || new Date().toISOString().split('T')[0],
-          summary: truncate(r.abstract || '暂无摘要', 180),
-          blog_content: r.blog || '',
-          pdf_url: r.pdf_url,
-          liked: !!r.liked
-        }))
-        setBlogs(recs)
-      } else {
-        setBlogs([])
-      }
-    } catch (e) {
-      console.error('获取推荐失败', e)
-      setBlogs([])
-    } finally {
-      setLoading(false)
-    }
+    await fetchRecommendations()
   }
 
-  const openBlogMarkdown = (title, blogContent, fallbackPdf) => {
+  const openBlogMarkdown = (title, blogContent, fallbackPdf, paperId) => {
     if (!blogContent) {
       if (fallbackPdf) {
         window.open(fallbackPdf, '_blank')
+        showToast('任务已完成：已打开原文 PDF')
       } else {
-        alert('暂无博客内容')
+        showToast('暂无博客内容', 'error')
       }
       return
     }
 
     const win = window.open('', '_blank')
     if (!win) return
-    const safeTitle = title || '博客'
+    const safeTitle = title || 'AI 博客'
     const html = `
       <!doctype html>
       <html>
         <head>
           <meta charset="utf-8" />
+          <meta name="viewport" content="width=device-width, initial-scale=1" />
           <title>${safeTitle}</title>
           <style>
-            body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; padding: 30px; max-width: 960px; margin: auto; line-height: 1.6; }
-            pre { background: #f6f8fa; padding: 12px; border-radius: 6px; overflow: auto; }
-            code { background: #f6f8fa; padding: 2px 4px; border-radius: 4px; }
-            h1, h2, h3 { color: #333; }
-            a { color: #667eea; }
+            :root {
+              color: #333;
+              background: #f8f9fa;
+              font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+            }
+            * { box-sizing: border-box; }
+            body {
+              margin: 0;
+              min-height: 100vh;
+              background:
+                radial-gradient(circle at top left, rgba(102, 126, 234, 0.14), transparent 34rem),
+                linear-gradient(180deg, #ffffff 0%, #f8f9fa 45%, #f3f1fb 100%);
+            }
+            .reader-shell {
+              width: min(1120px, calc(100% - 42px));
+              margin: 0 auto;
+              padding: 34px 0 64px;
+            }
+            .brand {
+              margin-bottom: 16px;
+              font-weight: 800;
+              font-size: 22px;
+              letter-spacing: -0.03em;
+              background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+              -webkit-background-clip: text;
+              color: transparent;
+            }
+            .reader-layout {
+              display: grid;
+              grid-template-columns: 220px minmax(0, 1fr);
+              gap: 22px;
+              align-items: start;
+            }
+            .reader-rail {
+              position: sticky;
+              top: 24px;
+              padding: 18px 16px;
+              border: 1px solid rgba(102, 126, 234, 0.14);
+              border-radius: 18px;
+              background: rgba(255, 255, 255, 0.72);
+              box-shadow: 0 16px 36px rgba(102, 126, 234, 0.08);
+            }
+            .rail-title {
+              margin: 0 0 12px;
+              color: #667eea;
+              font-size: 14px;
+              font-weight: 800;
+            }
+            .rail-list {
+              display: grid;
+              gap: 4px;
+            }
+            .rail-empty {
+              color: #8a90a0;
+              font-size: 13px;
+              line-height: 1.6;
+            }
+            .rail-item {
+              display: block;
+              padding: 7px 8px;
+              border-radius: 10px;
+              color: #5d6170;
+              font-size: 13px;
+              line-height: 1.35;
+              text-decoration: none;
+              transition: color 0.2s ease, background 0.2s ease;
+            }
+            .rail-item:hover {
+              color: #667eea;
+              background: rgba(102, 126, 234, 0.08);
+            }
+            .rail-item.level-3 {
+              padding-left: 18px;
+              color: #757b8b;
+              font-size: 12px;
+            }
+            .article-card {
+              overflow: hidden;
+              border: 1px solid rgba(102, 126, 234, 0.16);
+              border-radius: 20px;
+              background: rgba(255, 255, 255, 0.94);
+              box-shadow: 0 20px 56px rgba(102, 126, 234, 0.1);
+            }
+            .article-hero {
+              padding: 34px 42px 26px;
+              border-bottom: 1px solid #ececf5;
+              background:
+                linear-gradient(135deg, rgba(102, 126, 234, 0.08), rgba(118, 75, 162, 0.06)),
+                #ffffff;
+            }
+            .article-hero h1 {
+              margin: 0;
+              max-width: 820px;
+              color: #2f3137;
+              font-size: clamp(28px, 4vw, 44px);
+              line-height: 1.16;
+              letter-spacing: -0.03em;
+            }
+            .article-meta {
+              display: flex;
+              flex-wrap: wrap;
+              gap: 10px;
+              margin-top: 14px;
+              color: #667085;
+              font-size: 13px;
+            }
+            .article-meta span {
+              padding: 6px 10px;
+              border-radius: 999px;
+              background: rgba(255, 255, 255, 0.78);
+              border: 1px solid rgba(102, 126, 234, 0.14);
+            }
+            .article-body {
+              padding: 32px 42px 48px;
+              font-size: 16px;
+              line-height: 1.72;
+            }
+            .article-body h1:first-child { display: none; }
+            .article-body h2 {
+              margin: 1.8em 0 0.65em;
+              color: #2f3137;
+              font-size: 26px;
+              line-height: 1.25;
+              letter-spacing: -0.02em;
+            }
+            .article-body h3 {
+              margin: 1.55em 0 0.55em;
+              color: #333;
+              font-size: 20px;
+            }
+            .article-body p { margin: 0.78em 0; }
+            .article-body ul,
+            .article-body ol {
+              margin: 0.75em 0;
+              padding-left: 1.35em;
+            }
+            .article-body li {
+              margin: 0.25em 0;
+            }
+            .article-body strong { color: #2f3137; }
+            .article-body a { color: #667eea; }
+            .article-body blockquote {
+              margin: 22px 0;
+              padding: 18px 20px;
+              border-left: 4px solid #667eea;
+              border-radius: 14px;
+              background: #f3f1ff;
+              color: #4d4f5c;
+            }
+            .article-body pre {
+              overflow: auto;
+              padding: 18px;
+              border-radius: 16px;
+              background: #26243b;
+              color: #f8f9fa;
+            }
+            .article-body code {
+              padding: 2px 6px;
+              border-radius: 7px;
+              background: #f3f1ff;
+              color: #5a4db3;
+              font-size: 0.92em;
+            }
+            .article-body pre code {
+              padding: 0;
+              background: transparent;
+              color: inherit;
+            }
+            @media (max-width: 900px) {
+              .reader-shell { width: min(100% - 28px, 760px); }
+              .reader-layout { grid-template-columns: 1fr; }
+              .reader-rail { position: static; }
+              .article-hero,
+              .article-body { padding-left: 24px; padding-right: 24px; }
+            }
           </style>
           <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
         </head>
         <body>
-          <h1>${safeTitle}</h1>
-          <div id="app"></div>
+          <main class="reader-shell">
+            <div class="brand">ScholarLink AI</div>
+            <div class="reader-layout">
+              <aside class="reader-rail">
+                <p class="rail-title">文章目录</p>
+                <nav class="rail-list" id="toc">
+                  <span class="rail-empty">正在生成目录...</span>
+                </nav>
+              </aside>
+              <article class="article-card" id="article">
+                <header class="article-hero">
+                  <h1>${safeTitle}</h1>
+                  <div class="article-meta">
+                    <span>AI Blog</span>
+                    <span>${new Date().toLocaleDateString('zh-CN')}</span>
+                  </div>
+                </header>
+                <div class="article-body" id="app"></div>
+              </article>
+            </div>
+          </main>
           <script>
-            const md = \`${blogContent.replace(/`/g, '\\`')}\`
-            document.getElementById('app').innerHTML = marked.parse(md)
+            const md = ${JSON.stringify(blogContent)}
+            const app = document.getElementById('app')
+            app.innerHTML = marked.parse(md)
+
+            const first = app.firstElementChild
+            const firstText = first ? first.textContent.trim() : ''
+            if (
+              first &&
+              first.tagName === 'P' &&
+              (firstText.startsWith('好的，作为') || firstText.includes('高质量的技术博客'))
+            ) {
+              const next = first.nextElementSibling
+              first.remove()
+              if (next && next.tagName === 'HR') next.remove()
+            }
+
+            const duplicateTitle = app.querySelector('h1')
+            if (duplicateTitle && duplicateTitle.textContent.trim() === ${JSON.stringify(safeTitle)}.trim()) {
+              duplicateTitle.remove()
+            }
+
+            const toc = document.getElementById('toc')
+            const headings = Array.from(app.querySelectorAll('h2, h3')).filter(heading => heading.textContent.trim())
+            if (!headings.length) {
+              toc.innerHTML = '<span class="rail-empty">正文未检测到分节标题</span>'
+            } else {
+              toc.innerHTML = ''
+              headings.forEach((heading, index) => {
+                const id = 'section-' + index
+                heading.id = id
+                const link = document.createElement('a')
+                link.className = 'rail-item level-' + heading.tagName.slice(1)
+                link.href = '#' + id
+                link.textContent = heading.textContent.trim()
+                toc.appendChild(link)
+              })
+            }
           </script>
         </body>
       </html>
     `
     win.document.write(html)
     win.document.close()
+    recordBlogRead(userId, paperId)
+    showToast('任务已完成：已打开博客')
   }
 
   const toggleLike = async (paperId, liked) => {
     if (!userId) {
-      alert('请先登录再收藏')
+      showToast('请先登录再收藏', 'error')
       return
     }
     try {
@@ -208,45 +448,63 @@ const Explore = () => {
       setBlogs(prev =>
         prev.map(b => b.paper_id === paperId ? { ...b, liked: !liked } : b)
       )
+      showToast(liked ? '任务已完成：已取消收藏' : '任务已完成：已收藏')
     } catch (e) {
       console.error('收藏操作失败', e)
-      alert('收藏操作失败，请稍后重试')
+      showToast('收藏操作失败，请稍后重试', 'error')
     }
+  }
+
+  const openPdf = (pdfUrl) => {
+    if (!pdfUrl) {
+      showToast('暂无 PDF 链接', 'error')
+      return
+    }
+    window.open(pdfUrl, '_blank')
+    showToast('任务已完成：已打开原文 PDF')
   }
 
   if (loading) {
     return (
-      <div className="explore-container">
-        <div className="loading">
-          <div className="loading-spinner"></div>
-          <p>正在加载推荐博客...</p>
-        </div>
+      <div className="explore-container explore-loading-container">
+        <LoadingState />
       </div>
     )
   }
 
   return (
     <div className="explore-container">
+      <Toast message={toast.message} type={toast.type} onClose={() => setToast({ message: '', type: 'success' })} />
       <div className="explore-header">
-        <h1>{isSearching ? '搜索结果' : '个性化推荐'}</h1>
-        <p>{isSearching ? '基于语义搜索的匹配结果' : '基于兴趣与相似度，为你推荐的论文博客'}</p>
-        <div style={{ marginTop: 20, display: 'flex', gap: 10, justifyContent: 'center' }}>
+        <span className="explore-eyebrow">Research Discovery</span>
+        <h1>{isSearching ? '搜索结果' : (isLoggedIn ? '个性化推荐' : '论文库精选')}</h1>
+        <p>{isSearching ? '基于语义搜索的论文博客匹配结果' : (isLoggedIn ? '基于兴趣与相似度，为你推荐可阅读、可收藏、可对话的论文博客' : '先浏览论文库中的精选内容，登录后可获得个性化推荐和收藏能力。')}</p>
+        {!isLoggedIn && !isSearching && (
+          <div className="guest-notice">
+            <div>
+              <strong>推荐登录使用</strong>
+              <span>登录后可保存收藏、设置研究兴趣，并获得更贴合你的论文推荐。</span>
+            </div>
+            <button type="button" onClick={() => navigate('/login')}>去登录</button>
+          </div>
+        )}
+        <div className="explore-search">
           <input
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="输入关键词进行语义搜索"
-            style={{ padding: '10px 12px', borderRadius: 8, border: '1px solid #ddd', width: '320px' }}
           />
           <button className="btn-primary" onClick={fetchSearch}>搜索</button>
           <button className="btn-secondary" onClick={resetToRecommend}>回到推荐</button>
         </div>
       </div>
-      
+
       <div className="blogs-grid">
         {blogs.length === 0 && (
-          <div style={{ textAlign: 'center', color: '#666', gridColumn: '1/-1' }}>
-            暂无推荐数据
+          <div className="empty-state">
+            <h3>暂无推荐数据</h3>
+            <p>换一个关键词，或回到推荐列表重新加载。</p>
           </div>
         )}
         {blogs.map(blog => (
@@ -254,16 +512,16 @@ const Explore = () => {
             <div className="blog-header">
               <h3 className="blog-title">{blog.title}</h3>
               <div className="blog-meta">
-                <span className="author">作者: {blog.author}</span>
+                <span className="author">作者 {blog.author}</span>
                 <span className="date">{blog.date}</span>
               </div>
             </div>
             <p className="blog-summary">{blog.summary}</p>
-            {blog.liked && <div className="tag liked-tag">喜欢</div>}
+            {blog.liked && <div className="tag liked-tag">已收藏</div>}
             <div className="blog-actions">
               <button
                 className="btn-primary"
-                onClick={() => openBlogMarkdown(blog.title, blog.blog_content, blog.pdf_url)}
+                onClick={() => openBlogMarkdown(blog.title, blog.blog_content, blog.pdf_url, blog.paper_id)}
               >
                 阅读博客
               </button>
@@ -271,11 +529,11 @@ const Explore = () => {
                 className="btn-ai"
                 onClick={() => navigate(`/chat/${blog.recommendation_id}`)}
               >
-                🤖 AI对话
+                AI 对话
               </button>
               <button
                 className="btn-secondary"
-                onClick={() => (blog.pdf_url ? window.open(blog.pdf_url, '_blank') : alert('暂无PDF链接'))}
+                onClick={() => openPdf(blog.pdf_url)}
               >
                 查看原文 PDF
               </button>
@@ -283,7 +541,7 @@ const Explore = () => {
                 className="btn-secondary"
                 onClick={() => toggleLike(blog.paper_id, blog.liked)}
               >
-                {blog.liked ? '已收藏' : '收藏'}
+                {blog.liked ? '取消收藏' : '收藏'}
               </button>
             </div>
           </div>

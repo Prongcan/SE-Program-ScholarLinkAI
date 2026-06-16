@@ -18,7 +18,6 @@ const Register = ({ onRegister }) => {
       ...formData,
       [e.target.name]: e.target.value
     })
-    // 清除错误信息
     if (error) setError('')
   }
 
@@ -26,23 +25,20 @@ const Register = ({ onRegister }) => {
     e.preventDefault()
     setIsLoading(true)
     setError('')
-    
-    // 验证密码确认
+
     if (formData.password !== formData.confirmPassword) {
       setError('两次输入的密码不一致')
       setIsLoading(false)
       return
     }
 
-    // 验证密码长度
     if (formData.password.length < 6) {
-      setError('密码长度至少为6位')
+      setError('密码长度至少为 6 位')
       setIsLoading(false)
       return
     }
-    
+
     try {
-      // 调用后端注册 API
       const response = await fetch('http://localhost:3001/users/register', {
         method: 'POST',
         headers: {
@@ -58,19 +54,11 @@ const Register = ({ onRegister }) => {
       const data = await response.json()
 
       if (response.ok && data.status === 'success') {
-        // 注册成功，保存用户信息
         localStorage.setItem('user', JSON.stringify(data.data))
         localStorage.setItem('isLoggedIn', 'true')
-        
-        // 通知父组件注册成功（自动登录）
-        if (onRegister) {
-          onRegister()
-        }
-        
-        // 跳转到首页
+        if (onRegister) onRegister()
         navigate('/')
       } else {
-        // 注册失败
         setError(data.message || '注册失败，请重试')
       }
     } catch (err) {
@@ -82,92 +70,95 @@ const Register = ({ onRegister }) => {
   }
 
   return (
-    <div className="login-container">
-      <div className="login-card">
-        <div className="login-header">
-          <h1>注册</h1>
-          <p>创建您的 ScholarLink AI 账户</p>
+    <div className="auth-container">
+      <section className="auth-card register-card">
+        <div className="auth-side">
+          <span className="auth-kicker">ScholarLink AI</span>
+          <h1>创建账户</h1>
+          <p>告诉系统你的研究方向，获得更贴合的论文博客推荐。</p>
+          <div className="auth-points">
+            <span>研究兴趣建模</span>
+            <span>论文博客生成</span>
+            <span>收藏同步</span>
+          </div>
         </div>
-        
-        <form onSubmit={handleSubmit} className="login-form">
-          {error && (
-            <div className="error-message">
-              {error}
+
+        <div className="auth-form-panel">
+          <div className="login-header">
+            <h2>注册</h2>
+            <p>创建您的 ScholarLink AI 账户</p>
+          </div>
+
+          <form onSubmit={handleSubmit} className="login-form">
+            {error && <div className="error-message">{error}</div>}
+
+            <div className="form-group">
+              <label htmlFor="username">用户名</label>
+              <input
+                type="text"
+                id="username"
+                name="username"
+                value={formData.username}
+                onChange={handleChange}
+                placeholder="请输入用户名"
+                required
+                minLength={3}
+              />
             </div>
-          )}
-          
-          <div className="form-group">
-            <label htmlFor="username">用户名</label>
-            <input
-              type="text"
-              id="username"
-              name="username"
-              value={formData.username}
-              onChange={handleChange}
-              placeholder="请输入用户名"
-              required
-              minLength={3}
-            />
-          </div>
-          
-          <div className="form-group">
-            <label htmlFor="password">密码</label>
-            <input
-              type="password"
-              id="password"
-              name="password"
-              value={formData.password}
-              onChange={handleChange}
-              placeholder="请输入密码（至少6位）"
-              required
-              minLength={6}
-            />
-          </div>
 
-          <div className="form-group">
-            <label htmlFor="confirmPassword">确认密码</label>
-            <input
-              type="password"
-              id="confirmPassword"
-              name="confirmPassword"
-              value={formData.confirmPassword}
-              onChange={handleChange}
-              placeholder="请再次输入密码"
-              required
-              minLength={6}
-            />
-          </div>
+            <div className="form-group">
+              <label htmlFor="password">密码</label>
+              <input
+                type="password"
+                id="password"
+                name="password"
+                value={formData.password}
+                onChange={handleChange}
+                placeholder="请输入密码，至少 6 位"
+                required
+                minLength={6}
+              />
+            </div>
 
-          <div className="form-group">
-            <label htmlFor="interest">研究兴趣（可选）</label>
-            <input
-              type="text"
-              id="interest"
-              name="interest"
-              value={formData.interest}
-              onChange={handleChange}
-              placeholder="例如：Machine Learning, NLP, Computer Vision"
-            />
-            <small className="form-hint">设置您的研究兴趣，系统将为您推荐相关论文</small>
+            <div className="form-group">
+              <label htmlFor="confirmPassword">确认密码</label>
+              <input
+                type="password"
+                id="confirmPassword"
+                name="confirmPassword"
+                value={formData.confirmPassword}
+                onChange={handleChange}
+                placeholder="请再次输入密码"
+                required
+                minLength={6}
+              />
+            </div>
+
+            <div className="form-group">
+              <label htmlFor="interest">研究兴趣（可选）</label>
+              <input
+                type="text"
+                id="interest"
+                name="interest"
+                value={formData.interest}
+                onChange={handleChange}
+                placeholder="例如：Machine Learning, NLP, Computer Vision"
+              />
+              <small className="form-hint">设置研究兴趣后，系统会优先推荐相关论文。</small>
+            </div>
+
+            <button type="submit" className="btn-login-submit" disabled={isLoading}>
+              {isLoading ? '注册中...' : '注册'}
+            </button>
+          </form>
+
+          <div className="login-footer">
+            <p>已有账户？ <Link to="/login" className="link">立即登录</Link></p>
           </div>
-          
-          <button 
-            type="submit" 
-            className="btn-login-submit"
-            disabled={isLoading}
-          >
-            {isLoading ? '注册中...' : '注册'}
-          </button>
-        </form>
-        
-        <div className="login-footer">
-          <p>已有账户？ <Link to="/login" className="link">立即登录</Link></p>
         </div>
-      </div>
+      </section>
     </div>
   )
 }
 
 export default Register
-
-

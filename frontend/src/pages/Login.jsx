@@ -16,7 +16,6 @@ const Login = ({ onLogin }) => {
       ...formData,
       [e.target.name]: e.target.value
     })
-    // 清除错误信息
     if (error) setError('')
   }
 
@@ -24,9 +23,8 @@ const Login = ({ onLogin }) => {
     e.preventDefault()
     setIsLoading(true)
     setError('')
-    
+
     try {
-      // 调用后端登录 API
       const response = await fetch('http://localhost:3001/users/login', {
         method: 'POST',
         headers: {
@@ -41,17 +39,11 @@ const Login = ({ onLogin }) => {
       const data = await response.json()
 
       if (response.ok && data.status === 'success') {
-        // 保存用户信息到 localStorage
         localStorage.setItem('user', JSON.stringify(data.data))
         localStorage.setItem('isLoggedIn', 'true')
-        
-        // 通知父组件登录成功
         onLogin()
-        
-        // 跳转到首页
         navigate('/')
       } else {
-        // 登录失败
         setError(data.message || '登录失败，请检查用户名和密码')
       }
     } catch (err) {
@@ -63,60 +55,64 @@ const Login = ({ onLogin }) => {
   }
 
   return (
-    <div className="login-container">
-      <div className="login-card">
-        <div className="login-header">
-          <h1>登录</h1>
-          <p>欢迎回到 ScholarLink AI</p>
+    <div className="auth-container">
+      <section className="auth-card">
+        <div className="auth-side">
+          <span className="auth-kicker">ScholarLink AI</span>
+          <h1>欢迎回来</h1>
+          <p>登录后可获得个性化论文推荐、收藏同步和 AI 论文对话。</p>
+          <div className="auth-points">
+            <span>个性化推荐</span>
+            <span>收藏资料库</span>
+            <span>AI 研究助手</span>
+          </div>
         </div>
-        
-        <form onSubmit={handleSubmit} className="login-form">
-          {error && (
-            <div className="error-message">
-              {error}
+
+        <div className="auth-form-panel">
+          <div className="login-header">
+            <h2>登录</h2>
+            <p>继续使用 ScholarLink AI</p>
+          </div>
+
+          <form onSubmit={handleSubmit} className="login-form">
+            {error && <div className="error-message">{error}</div>}
+
+            <div className="form-group">
+              <label htmlFor="username">用户名</label>
+              <input
+                type="text"
+                id="username"
+                name="username"
+                value={formData.username}
+                onChange={handleChange}
+                placeholder="请输入用户名"
+                required
+              />
             </div>
-          )}
-          
-          <div className="form-group">
-            <label htmlFor="username">用户名</label>
-            <input
-              type="text"
-              id="username"
-              name="username"
-              value={formData.username}
-              onChange={handleChange}
-              placeholder="请输入您的用户名"
-              required
-            />
+
+            <div className="form-group">
+              <label htmlFor="password">密码</label>
+              <input
+                type="password"
+                id="password"
+                name="password"
+                value={formData.password}
+                onChange={handleChange}
+                placeholder="请输入密码"
+                required
+              />
+            </div>
+
+            <button type="submit" className="btn-login-submit" disabled={isLoading}>
+              {isLoading ? '登录中...' : '登录'}
+            </button>
+          </form>
+
+          <div className="login-footer">
+            <p>还没有账户？ <Link to="/register" className="link">立即注册</Link></p>
           </div>
-          
-          <div className="form-group">
-            <label htmlFor="password">密码</label>
-            <input
-              type="password"
-              id="password"
-              name="password"
-              value={formData.password}
-              onChange={handleChange}
-              placeholder="请输入您的密码"
-              required
-            />
-          </div>
-          
-          <button 
-            type="submit" 
-            className="btn-login-submit"
-            disabled={isLoading}
-          >
-            {isLoading ? '登录中...' : '登录'}
-          </button>
-        </form>
-        
-        <div className="login-footer">
-          <p>还没有账户？ <Link to="/register" className="link">立即注册</Link></p>
-          <a href="#" className="link">忘记密码？</a>
         </div>
-      </div>
+      </section>
     </div>
   )
 }

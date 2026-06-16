@@ -32,8 +32,8 @@ function App() {
         <Header isLoggedIn={isLoggedIn} onLogout={handleLogout} />
         <main className="main-content">
           <Routes>
-            <Route path="/" element={<Explore />} />
-            <Route path="/explore" element={<Explore />} />
+            <Route path="/" element={<Explore isLoggedIn={isLoggedIn} />} />
+            <Route path="/explore" element={<Explore isLoggedIn={isLoggedIn} />} />
             <Route path="/favorites" element={<Favorites isLoggedIn={isLoggedIn} />} />
             <Route path="/profile" element={<Profile isLoggedIn={isLoggedIn} />} />
             <Route path="/chat/:recommendationId" element={<Chat />} />
