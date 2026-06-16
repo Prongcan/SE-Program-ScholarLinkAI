@@ -496,7 +496,7 @@ const Explore = ({ isLoggedIn }) => {
             placeholder="输入关键词进行语义搜索"
           />
           <button className="btn-primary" onClick={fetchSearch}>搜索</button>
-          <button className="btn-secondary" onClick={resetToRecommend}>回到推荐</button>
+          <button className="btn-secondary" onClick={resetToRecommend}>刷新一下</button>
         </div>
       </div>
 
