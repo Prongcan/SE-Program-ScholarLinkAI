@@ -22,6 +22,34 @@ const GuestPrompt = ({ kicker, title, description, primary, secondary, primaryTo
   </section>
 )
 
+const ProfileLoading = () => (
+  <div className="profile-loading-shell">
+    <div className="loading-panel">
+      <div className="loading-orbit">
+        <div className="loading-spinner"></div>
+      </div>
+      <div>
+        <p className="loading-kicker">ScholarLink AI</p>
+        <h2>正在加载用户资料中...</h2>
+        <p>正在同步您的账户信息、阅读历史和收藏统计。</p>
+      </div>
+    </div>
+    <div className="loading-skeleton-grid" aria-hidden="true">
+      {[0, 1, 2].map(item => (
+        <div className="skeleton-card" key={item}>
+          <div className="skeleton-line wide"></div>
+          <div className="skeleton-line"></div>
+          <div className="skeleton-line short"></div>
+          <div className="skeleton-actions">
+            <span></span>
+            <span></span>
+          </div>
+        </div>
+      ))}
+    </div>
+  </div>
+)
+
 const Profile = ({ isLoggedIn }) => {
   const [user, setUser] = useState(null)
   const [interest, setInterest] = useState('')
@@ -29,10 +57,8 @@ const Profile = ({ isLoggedIn }) => {
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState('')
   const [toast, setToast] = useState({ message: '', type: 'success' })
-  const [stats, setStats] = useState({
-    favorites: 0,
-    reads: 0
-  })
+  const [stats, setStats] = useState(null)
+  const [isStatsLoading, setIsStatsLoading] = useState(true)
 
   const showToast = (message, type = 'success') => {
     setToast({ message, type })
@@ -74,8 +100,15 @@ const Profile = ({ isLoggedIn }) => {
 
   const fetchProfileStats = async (userId) => {
     const readKey = `scholarlink_read_history_${userId}`
-    const readHistory = JSON.parse(localStorage.getItem(readKey) || '[]')
+    let readHistory = []
 
+    try {
+      readHistory = JSON.parse(localStorage.getItem(readKey) || '[]')
+    } catch (err) {
+      console.error('解析阅读历史失败:', err)
+    }
+
+    setIsStatsLoading(true)
     try {
       const response = await fetch(`http://localhost:3001/recommendationOrchestrator/favorites?user_id=${userId}&limit=50`)
       const data = await response.json()
@@ -89,10 +122,12 @@ const Profile = ({ isLoggedIn }) => {
       })
     } catch (err) {
       console.error('获取资料统计失败:', err)
-      setStats(prev => ({
-        ...prev,
+      setStats({
+        favorites: null,
         reads: readHistory.length
-      }))
+      })
+    } finally {
+      setIsStatsLoading(false)
     }
   }
 
@@ -130,7 +165,7 @@ const Profile = ({ isLoggedIn }) => {
         const updatedUser = { ...user, interest: interest.trim() }
         setUser(updatedUser)
         localStorage.setItem('user', JSON.stringify(updatedUser))
-        showToast('任务已完成：研究兴趣已保存')
+        showToast('研究兴趣已保存，正在为您生成推荐')
       } else {
         const message = data.message || '更新失败，请重试'
         setError(message)
@@ -175,20 +210,17 @@ const Profile = ({ isLoggedIn }) => {
     )
   }
 
-  if (!user) {
+  if (!user || isStatsLoading) {
     return (
       <div className="profile-container">
-        <div className="profile-loading">
-          <div className="loading-spinner"></div>
-          <h2>正在加载资料...</h2>
-          <p>正在同步您的账户信息。</p>
-        </div>
+        <ProfileLoading />
       </div>
     )
   }
-
   const interestItems = splitInterest(interest)
   const initials = (user.username || 'U').slice(0, 2).toUpperCase()
+  const favoriteCount = stats?.favorites ?? '—'
+  const readCount = stats?.reads ?? '—'
 
   return (
     <div className="profile-container">
@@ -216,11 +248,11 @@ const Profile = ({ isLoggedIn }) => {
           </div>
           <div className="profile-stats">
             <div className="stat">
-              <span className="stat-number">{stats.favorites}</span>
+              <span className="stat-number">{favoriteCount}</span>
               <span className="stat-label">收藏论文</span>
             </div>
             <div className="stat">
-              <span className="stat-number">{stats.reads}</span>
+              <span className="stat-number">{readCount}</span>
               <span className="stat-label">阅读历史</span>
             </div>
           </div>

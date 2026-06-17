@@ -593,6 +593,48 @@ class RecommendationOrchestrator:
             return {"blogs": [], "requested": topk, "generated": 0, "saved": 0, "save_failed": 0}
 
 
+    def _existing_recommendation_paper_ids(self, user_id: int) -> set[int]:
+        rows = self.db.query_all(
+            "SELECT paper_id FROM recommendations WHERE user_id = %s",
+            (user_id,),
+        )
+        return {int(row["paper_id"]) for row in rows if row.get("paper_id") is not None}
+
+    def _cleanup_user_recommendations(self, user_id: int, keep_limit: int = 30) -> int:
+        total = self.db.query_one(
+            "SELECT COUNT(*) AS count FROM recommendations WHERE user_id = %s",
+            (user_id,),
+        )
+        total_count = int(total["count"]) if total and total.get("count") is not None else 0
+        over_limit = total_count - keep_limit
+        if over_limit <= 0:
+            return 0
+
+        result = self.db.execute(
+            """
+            DELETE FROM recommendations
+            WHERE id IN (
+                SELECT id FROM (
+                    SELECT r.id
+                    FROM recommendations r
+                    LEFT JOIN paper_liked pl
+                      ON pl.user_id = r.user_id
+                     AND pl.paper_id = r.paper_id
+                    LEFT JOIN chat_history ch
+                      ON ch.recommendation_id = r.id
+                    WHERE r.user_id = %s
+                      AND pl.paper_id IS NULL
+                      AND ch.id IS NULL
+                    GROUP BY r.id
+                    ORDER BY r.created_at ASC
+                    LIMIT %s
+                ) AS old_recommendations
+            )
+            """,
+            (user_id, over_limit),
+        )
+        return int(result.get("rowcount", 0))
+
     def generate_blogs_for_all_users(
         self,
         topk_per_user: int = 3,
@@ -641,13 +683,16 @@ class RecommendationOrchestrator:
 
             for u in users:
                 uid = u["user_id"]
-                recs = self.recommend_papers(uid, top_k=topk_per_user)
+                existing_paper_ids = self._existing_recommendation_paper_ids(uid)
+                recs = self.recommend_papers(uid, top_k=max(topk_per_user * 10, 30))
                 paper_ids: List[int] = []
                 for r in recs:
                     pid = r.get("paper_id")
                     pdf_url = r.get("pdf_url")
                     title = r.get("title")
                     if not pid or not pdf_url:
+                        continue
+                    if pid in existing_paper_ids:
                         continue
                     if pid not in paper_map:
                         paper_map[pid] = {
@@ -656,16 +701,22 @@ class RecommendationOrchestrator:
                             "pdf_url": pdf_url,
                         }
                     paper_ids.append(pid)
+                    if len(paper_ids) >= topk_per_user:
+                        break
                 user_reco[uid] = paper_ids
 
             if not paper_map:
                 logger.warning("没有可生成博客的论文（可能缺少pdf_url）")
+                cleaned = 0
+                for u in users:
+                    cleaned += self._cleanup_user_recommendations(u["user_id"], keep_limit=30)
                 return {
                     "message": "no papers to generate",
                     "users": len(users),
                     "papers": 0,
                     "generated": 0,
                     "saved_pairs": 0,
+                    "cleaned": cleaned,
                     "failed_generate": 0,
                     "failed_save": 0,
                 }
@@ -706,18 +757,22 @@ class RecommendationOrchestrator:
                     if not content:
                         continue
                     try:
-                        self.db.execute(
+                        result = self.db.execute(
                             """
-                            INSERT INTO recommendations (user_id, paper_id, blog)
+                            INSERT IGNORE INTO recommendations (user_id, paper_id, blog)
                             VALUES (%s, %s, %s)
-                            ON DUPLICATE KEY UPDATE blog = VALUES(blog), created_at = CURRENT_TIMESTAMP
                             """,
                             (uid, pid, content),
                         )
-                        saved_pairs += 1
+                        if result.get("rowcount", 0) > 0:
+                            saved_pairs += 1
                     except Exception as e:
                         failed_save += 1
                         logger.error(f"保存 user_id={uid}, paper_id={pid} 到 recommendations 失败: {e}")
+
+            cleaned = 0
+            for u in users:
+                cleaned += self._cleanup_user_recommendations(u["user_id"], keep_limit=30)
 
             return {
                 "message": "ok",
@@ -725,6 +780,7 @@ class RecommendationOrchestrator:
                 "papers": len(paper_map),
                 "generated": len(blog_map),
                 "saved_pairs": saved_pairs,
+                "cleaned": cleaned,
                 "failed_generate": failed_generate,
                 "failed_save": failed_save,
             }

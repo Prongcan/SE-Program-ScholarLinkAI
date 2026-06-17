@@ -289,6 +289,109 @@
   gap: 10px;
 }
 
+.profile-loading-shell {
+  width: min(920px, 100%);
+  min-height: calc(100vh - 180px);
+  margin: 0 auto;
+  display: grid;
+  place-content: center;
+  gap: 28px;
+}
+
+.loading-panel {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  width: min(620px, 100%);
+  margin: 0 auto;
+  padding: 28px;
+  border: 1px solid rgba(102, 126, 234, 0.16);
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 24px 70px rgba(102, 126, 234, 0.14);
+}
+
+.loading-orbit {
+  display: grid;
+  place-items: center;
+  width: 76px;
+  height: 76px;
+  flex: 0 0 76px;
+  border-radius: 24px;
+  background: linear-gradient(135deg, rgba(102, 126, 234, 0.12), rgba(118, 75, 162, 0.14));
+}
+
+.loading-panel h2 {
+  margin: 2px 0 6px;
+  color: #30313a;
+  font-size: 24px;
+  letter-spacing: -0.03em;
+}
+
+.loading-panel p {
+  margin: 0;
+  color: #667085;
+}
+
+.loading-kicker {
+  color: #667eea !important;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.loading-skeleton-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.skeleton-card {
+  min-height: 160px;
+  padding: 20px;
+  border: 1px solid #ececf5;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.68);
+}
+
+.skeleton-line,
+.skeleton-actions span {
+  display: block;
+  height: 12px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #ececf5 0%, #f8f9fa 48%, #ececf5 100%);
+  background-size: 220% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+}
+
+.skeleton-line {
+  margin-bottom: 14px;
+}
+
+.skeleton-line.wide {
+  width: 84%;
+  height: 18px;
+}
+
+.skeleton-line.short {
+  width: 52%;
+}
+
+.skeleton-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 26px;
+}
+
+.skeleton-actions span {
+  width: 78px;
+  height: 32px;
+}
+
+@keyframes shimmer {
+  0% { background-position: 120% 0; }
+  100% { background-position: -120% 0; }
+}
+
 .btn-login {
   display: inline-flex;
   align-items: center;
@@ -447,5 +550,18 @@
   .profile-loading,
   .guest-prompt {
     padding: 32px 20px;
+  }
+
+  .profile-loading-shell {
+    min-height: calc(100vh - 140px);
+  }
+
+  .loading-panel {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .loading-skeleton-grid {
+    grid-template-columns: 1fr;
   }
 }

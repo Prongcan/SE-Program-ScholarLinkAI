@@ -8,6 +8,7 @@ import sys
 import os
 import logging
 import hashlib
+import threading
 
 # 添加父目录到Python路径
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -90,6 +91,29 @@ def refresh_user_recommendations(orchestrator: RecommendationOrchestrator, user_
     )
     result["paper_fetch"] = fetch_result
     return result
+
+
+def enqueue_user_recommendation_refresh(user_id: int, interest: str, topk: int = 3):
+    if not interest or not interest.strip():
+        return None
+
+    def _run_refresh():
+        try:
+            orchestrator = RecommendationOrchestrator()
+            if orchestrator.update_user_interest_embedding(user_id, interest):
+                refresh_user_recommendations(orchestrator, user_id, interest, topk=topk)
+                logger.info(f"用户 {user_id} 后台推荐刷新完成")
+            else:
+                logger.warning(f"用户 {user_id} 后台兴趣embedding更新失败")
+        except Exception as e:
+            logger.error(f"用户 {user_id} 后台推荐刷新失败: {str(e)}", exc_info=True)
+
+    thread = threading.Thread(target=_run_refresh, daemon=True)
+    thread.start()
+    return {
+        "status": "queued",
+        "message": "正在为您生成推荐"
+    }
 
 
 @users_ns.route('/login')
@@ -238,17 +262,7 @@ class UserRegister(Resource):
             user_id = result['lastrowid']
             logger.info(f"用户注册成功: {username} (ID={user_id})")
             
-            recommendation_result = None
-            # 如果提供了兴趣，触发生成embedding
-            if interest:
-                try:
-                    orchestrator = RecommendationOrchestrator()
-                    if orchestrator.update_user_interest_embedding(user_id, interest):
-                        recommendation_result = refresh_user_recommendations(orchestrator, user_id, interest)
-                        logger.info(f"用户 {user_id} 兴趣embedding初始化成功")
-                except Exception as e:
-                    logger.warning(f"初始化用户兴趣embedding时出错: {str(e)}")
-                    # 不影响注册流程
+            recommendation_result = enqueue_user_recommendation_refresh(user_id, interest)
             
             return {
                 'message': '用户注册成功',
@@ -376,27 +390,7 @@ class UserInterest(Resource):
             
             logger.info(f"用户 {user_id} 兴趣更新成功: {interest}")
             
-            recommendation_result = None
-            # 触发更新兴趣embedding，并刷新推荐表
-            try:
-                orchestrator = RecommendationOrchestrator()
-                embedding_updated = orchestrator.update_user_interest_embedding(user_id, interest)
-                if embedding_updated:
-                    recommendation_result = refresh_user_recommendations(orchestrator, user_id, interest)
-                    logger.info(f"用户 {user_id} 兴趣embedding更新成功")
-                else:
-                    logger.warning(f"用户 {user_id} 兴趣embedding更新失败（可能是配额限制，稍后会自动重试）")
-                    # 注意：即使embedding更新失败，兴趣文本已保存，可以在后台任务中重试
-            except RuntimeError as e:
-                error_msg = str(e)
-                # 配额错误不影响主流程，但记录警告
-                if "quota" in error_msg.lower() or "429" in error_msg or "rate limit" in error_msg.lower():
-                    logger.warning(f"用户 {user_id} 兴趣embedding更新失败（API配额限制）: {error_msg}")
-                else:
-                    logger.error(f"更新用户兴趣embedding时出错: {error_msg}", exc_info=True)
-            except Exception as e:
-                logger.error(f"更新用户兴趣embedding时出错: {str(e)}", exc_info=True)
-                # 不影响主流程，继续返回成功
+            recommendation_result = enqueue_user_recommendation_refresh(user_id, interest)
             
             return {
                 'message': '用户兴趣更新成功',

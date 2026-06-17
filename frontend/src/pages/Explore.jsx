@@ -44,6 +44,15 @@ const recordBlogRead = (uid, paperId) => {
   localStorage.setItem(key, JSON.stringify(next))
 }
 
+const BATCH_SIZE = 3
+
+const getRecommendationBatch = (items, index = 0) => {
+  if (items.length <= BATCH_SIZE) return items
+  const maxStart = Math.max(items.length - BATCH_SIZE, 0)
+  const start = Math.min(index * BATCH_SIZE, maxStart)
+  return items.slice(start, start + BATCH_SIZE)
+}
+
 const LoadingState = () => (
   <div className="explore-loading-shell">
     <div className="loading-panel">
@@ -79,30 +88,38 @@ const Explore = ({ isLoggedIn }) => {
   const [userId, setUserId] = useState(null)
   const [query, setQuery] = useState('')
   const [isSearching, setIsSearching] = useState(false)
+  const [recommendationPool, setRecommendationPool] = useState([])
+  const [batchIndex, setBatchIndex] = useState(0)
   const [toast, setToast] = useState({ message: '', type: 'success' })
 
   const showToast = (message, type = 'success') => {
     setToast({ message, type })
   }
 
+  const applyRecommendationBatch = (items, nextIndex = 0) => {
+    setRecommendationPool(items)
+    setBatchIndex(nextIndex)
+    setBlogs(getRecommendationBatch(items, nextIndex))
+  }
+
   const fetchRecommendations = async (uid = userId) => {
     setLoading(true)
     try {
       const params = new URLSearchParams()
-      params.append('limit', uid ? '20' : '3')
+      params.append('limit', uid ? '20' : '9')
       if (uid) params.append('user_id', uid)
 
       const response = await fetch(`http://localhost:3001/recommendationOrchestrator/list?${params.toString()}`)
       const data = await response.json()
 
       if (response.ok && data.status === 'success' && data.data?.recommendations) {
-        setBlogs(data.data.recommendations.map(mapRecommendation))
+        applyRecommendationBatch(data.data.recommendations.map(mapRecommendation))
       } else {
-        setBlogs([])
+        applyRecommendationBatch([])
       }
     } catch (err) {
       console.error('获取推荐博客失败:', err)
-      setBlogs([])
+      applyRecommendationBatch([])
     } finally {
       setLoading(false)
     }
@@ -137,6 +154,8 @@ const Explore = ({ isLoggedIn }) => {
       params.append('topk', '5')
       const resp = await fetch(`http://localhost:3001/recommendationOrchestrator/search?${params.toString()}`)
       const data = await resp.json()
+      setRecommendationPool([])
+      setBatchIndex(0)
       if (resp.ok && data.status === 'success' && data.data?.results) {
         setBlogs(data.data.results.map(mapSearchResult))
       } else {
@@ -150,10 +169,42 @@ const Explore = ({ isLoggedIn }) => {
     }
   }
 
-  const resetToRecommend = async () => {
+  const changeRecommendationBatch = async () => {
     setQuery('')
     setIsSearching(false)
+    if (recommendationPool.length > BATCH_SIZE) {
+      const totalBatches = Math.ceil(recommendationPool.length / BATCH_SIZE)
+      const nextIndex = (batchIndex + 1) % totalBatches
+      setBatchIndex(nextIndex)
+      setBlogs(getRecommendationBatch(recommendationPool, nextIndex))
+      showToast('任务已完成：已换一批推荐')
+      return
+    }
     await fetchRecommendations()
+    showToast('任务已完成：已换一批推荐')
+  }
+
+  const refreshRecommendations = async () => {
+    if (!userId) {
+      showToast('请先登录后再刷新推荐', 'error')
+      return
+    }
+
+    try {
+      const response = await fetch('http://localhost:3001/recommendationOrchestrator/refresh', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: userId })
+      })
+      const data = await response.json()
+      if (!response.ok || data.status !== 'success') {
+        throw new Error(data.message || '刷新推荐失败')
+      }
+      showToast('正在为您生成推荐')
+    } catch (err) {
+      console.error('刷新推荐失败:', err)
+      showToast(err.message || '刷新推荐失败，请稍后重试', 'error')
+    }
   }
 
   const openBlogMarkdown = (title, blogContent, fallbackPdf, paperId) => {
@@ -448,6 +499,9 @@ const Explore = ({ isLoggedIn }) => {
       setBlogs(prev =>
         prev.map(b => b.paper_id === paperId ? { ...b, liked: !liked } : b)
       )
+      setRecommendationPool(prev =>
+        prev.map(b => b.paper_id === paperId ? { ...b, liked: !liked } : b)
+      )
       showToast(liked ? '任务已完成：已取消收藏' : '任务已完成：已收藏')
     } catch (e) {
       console.error('收藏操作失败', e)
@@ -496,15 +550,18 @@ const Explore = ({ isLoggedIn }) => {
             placeholder="输入关键词进行语义搜索"
           />
           <button className="btn-primary" onClick={fetchSearch}>搜索</button>
-          <button className="btn-secondary" onClick={resetToRecommend}>刷新一下</button>
+          <button className="btn-secondary" onClick={changeRecommendationBatch}>换一批</button>
+          {isLoggedIn && (
+            <button className="btn-secondary" onClick={refreshRecommendations}>刷新推荐</button>
+          )}
         </div>
       </div>
 
       <div className="blogs-grid">
         {blogs.length === 0 && (
           <div className="empty-state">
-            <h3>暂无推荐数据</h3>
-            <p>换一个关键词，或回到推荐列表重新加载。</p>
+            <h3>{isLoggedIn && !isSearching ? '正在为您生成推荐' : '暂无推荐数据'}</h3>
+            <p>{isLoggedIn && !isSearching ? '推荐论文和 AI 博客正在后台生成，稍后刷新即可查看。' : '换一个关键词，或回到推荐列表重新加载。'}</p>
           </div>
         )}
         {blogs.map(blog => (

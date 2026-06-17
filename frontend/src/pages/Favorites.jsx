@@ -427,8 +427,11 @@ const Favorites = ({ isLoggedIn }) => {
 
       {favs.length === 0 ? (
         <div className="favorites-empty">
-          <h3>暂无收藏</h3>
-          <p>去 Explore 收藏感兴趣的论文博客，它们会出现在这里。</p>
+          <div>
+            <p className="empty-kicker">Saved Library</p>
+            <h3>暂无收藏</h3>
+            <p>去 Explore 收藏感兴趣的论文博客，它们会出现在这里。</p>
+          </div>
           <Link to="/explore" className="btn-primary">去探索</Link>
         </div>
       ) : (

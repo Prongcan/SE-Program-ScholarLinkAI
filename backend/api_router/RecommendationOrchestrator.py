@@ -7,11 +7,14 @@ from datetime import datetime
 import sys
 import os
 import logging
+import threading
 
 # 添加父目录到Python路径
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from orchestrator.recommendation_orchestrator import RecommendationOrchestrator
+from service.dbmanager import DbManager
+from service.fetch_papers import PaperFetchService
 from service.search_service import SearchService
 
 # 配置日志
@@ -77,6 +80,45 @@ favorite_item_model = recommendation_ns.model('FavoriteItem', {
 })
 
 
+refresh_request_model = recommendation_ns.model('RefreshRecommendationsRequest', {
+    'user_id': fields.Integer(required=True, description='用户ID')
+})
+
+
+def enqueue_recommendation_refresh(user_id: int, interest: str, topk: int = 3):
+    def _run_refresh():
+        try:
+            try:
+                PaperFetchService().fetch_papers_by_query(interest, max_results=10)
+            except Exception as e:
+                logger.warning(f"用户 {user_id} 按兴趣抓取论文失败: {str(e)}")
+
+            orchestrator = RecommendationOrchestrator()
+            if orchestrator.update_user_interest_embedding(user_id, interest):
+                result = orchestrator.generate_blogs_for_all_users(
+                    topk_per_user=topk,
+                    max_workers=2,
+                    user_id=user_id,
+                )
+                logger.info(
+                    f"用户 {user_id} 手动刷新推荐完成: saved_pairs={result.get('saved_pairs', 0)}, "
+                    f"cleaned={result.get('cleaned', 0)}"
+                )
+            else:
+                logger.warning(f"用户 {user_id} 手动刷新推荐失败: embedding 未更新")
+        except Exception as e:
+            logger.error(f"用户 {user_id} 手动刷新推荐失败: {str(e)}", exc_info=True)
+
+    thread = threading.Thread(target=_run_refresh, daemon=True)
+    thread.start()
+    return {
+        "status": "queued",
+        "message": "正在为您生成推荐",
+        "topk": topk,
+        "keep_limit": 30
+    }
+
+
 @recommendation_ns.route('/')
 class GenerateBlogs(Resource):
     @recommendation_ns.doc('generate_blogs_orchestrator')
@@ -124,6 +166,7 @@ class GenerateBlogs(Resource):
                     'papers': result.get('papers', 0),
                     'generated': result.get('generated', 0),
                     'saved_pairs': result.get('saved_pairs', 0),
+                    'cleaned': result.get('cleaned', 0),
                     'failed_generate': result.get('failed_generate', 0),
                     'failed_save': result.get('failed_save', 0),
                     'topk_per_user': topk_per_user
@@ -134,6 +177,69 @@ class GenerateBlogs(Resource):
             logger.error(f"调用RecommendationOrchestrator失败: {str(e)}", exc_info=True)
             return {
                 'message': f'生成博客失败: {str(e)}',
+                'status': 'error',
+                'timestamp': datetime.now().isoformat(),
+                'data': None
+            }, 500
+
+
+@recommendation_ns.route('/refresh')
+class RefreshRecommendations(Resource):
+    @recommendation_ns.doc('refresh_recommendations')
+    @recommendation_ns.expect(refresh_request_model, validate=False)
+    @recommendation_ns.marshal_with(recommend_response_model)
+    def post(self):
+        try:
+            data = request.get_json() or {}
+            user_id = data.get('user_id')
+
+            try:
+                user_id = int(user_id)
+                if user_id <= 0:
+                    raise ValueError()
+            except Exception:
+                return {
+                    'message': '参数错误：user_id 必须是正整数',
+                    'status': 'error',
+                    'timestamp': datetime.now().isoformat(),
+                    'data': None
+                }, 400
+
+            user = DbManager().query_one(
+                "SELECT user_id, interest FROM users WHERE user_id = %s",
+                (user_id,)
+            )
+            if not user:
+                return {
+                    'message': f'用户不存在 (user_id={user_id})',
+                    'status': 'error',
+                    'timestamp': datetime.now().isoformat(),
+                    'data': None
+                }, 404
+
+            interest = (user.get('interest') or '').strip()
+            if not interest:
+                return {
+                    'message': '请先设置研究兴趣',
+                    'status': 'error',
+                    'timestamp': datetime.now().isoformat(),
+                    'data': None
+                }, 400
+
+            refresh = enqueue_recommendation_refresh(user_id, interest, topk=3)
+            return {
+                'message': '正在为您生成推荐',
+                'status': 'success',
+                'timestamp': datetime.now().isoformat(),
+                'data': {
+                    'user_id': user_id,
+                    'recommendation_refresh': refresh
+                }
+            }
+        except Exception as e:
+            logger.error(f"刷新推荐失败: {str(e)}", exc_info=True)
+            return {
+                'message': f'刷新推荐失败: {str(e)}',
                 'status': 'error',
                 'timestamp': datetime.now().isoformat(),
                 'data': None
