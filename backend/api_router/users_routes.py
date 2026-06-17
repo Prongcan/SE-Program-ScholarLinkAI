@@ -67,7 +67,7 @@ def verify_password(password: str, hashed: str) -> bool:
 def refresh_user_recommendations(orchestrator: RecommendationOrchestrator, user_id: int, interest: str, topk: int = 3):
     fetch_result = None
     try:
-        fetched_papers = PaperFetchService().fetch_papers_by_query(interest, max_results=10)
+        fetched_papers = PaperFetchService().fetch_papers_by_query(interest, max_results=5)
         fetch_result = {
             "fetched": len(fetched_papers),
             "query": interest,
@@ -82,7 +82,7 @@ def refresh_user_recommendations(orchestrator: RecommendationOrchestrator, user_
 
     result = orchestrator.generate_blogs_for_all_users(
         topk_per_user=topk,
-        max_workers=2,
+        max_workers=3,
         user_id=user_id,
     )
     logger.info(

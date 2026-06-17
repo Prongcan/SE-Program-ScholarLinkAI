@@ -190,6 +190,11 @@ const Explore = ({ isLoggedIn }) => {
       return
     }
 
+    setIsSearching(false)
+    setQuery('')
+    setLoading(true)
+    const refreshStartedAt = Date.now()
+
     try {
       const response = await fetch('http://localhost:3001/recommendationOrchestrator/refresh', {
         method: 'POST',
@@ -201,9 +206,47 @@ const Explore = ({ isLoggedIn }) => {
         throw new Error(data.message || '刷新推荐失败')
       }
       showToast('正在为您生成推荐')
+
+      const maxAttempts = 60
+      for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+        if (attempt > 0) {
+          await new Promise(resolve => setTimeout(resolve, 2000))
+        }
+
+        const params = new URLSearchParams()
+        params.append('limit', '20')
+        params.append('user_id', userId)
+        const listResponse = await fetch(`http://localhost:3001/recommendationOrchestrator/list?${params.toString()}`)
+        const listData = await listResponse.json()
+
+        if (listResponse.ok && listData.status === 'success' && listData.data?.recommendations) {
+          const recommendations = listData.data.recommendations
+          const hasFresh = recommendations.some(r => {
+            if (!r.created_at) return false
+            return new Date(r.created_at).getTime() >= refreshStartedAt - 3000
+          })
+          if (hasFresh) {
+            applyRecommendationBatch(recommendations.map(mapRecommendation))
+            return
+          }
+        }
+      }
+
+      const params = new URLSearchParams()
+      params.append('limit', '20')
+      params.append('user_id', userId)
+      const listResponse = await fetch(`http://localhost:3001/recommendationOrchestrator/list?${params.toString()}`)
+      const listData = await listResponse.json()
+      if (listResponse.ok && listData.status === 'success' && listData.data?.recommendations) {
+        applyRecommendationBatch(listData.data.recommendations.map(mapRecommendation))
+      } else {
+        applyRecommendationBatch([])
+      }
     } catch (err) {
       console.error('刷新推荐失败:', err)
       showToast(err.message || '刷新推荐失败，请稍后重试', 'error')
+    } finally {
+      setLoading(false)
     }
   }
 
