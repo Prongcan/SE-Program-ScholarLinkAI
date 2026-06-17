@@ -8,6 +8,7 @@ import sys
 import os
 import logging
 import threading
+from typing import Optional, Dict
 
 # 添加父目录到Python路径
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -84,8 +85,32 @@ refresh_request_model = recommendation_ns.model('RefreshRecommendationsRequest',
     'user_id': fields.Integer(required=True, description='用户ID')
 })
 
+_refresh_jobs_lock = threading.Lock()
+_refresh_jobs: Dict[int, dict] = {}
+
+
+def _set_refresh_job(user_id: int, payload: dict) -> None:
+    with _refresh_jobs_lock:
+        _refresh_jobs[user_id] = {
+            **payload,
+            "updated_at": datetime.now().isoformat(),
+        }
+
+
+def get_refresh_job(user_id: int) -> Optional[dict]:
+    with _refresh_jobs_lock:
+        job = _refresh_jobs.get(user_id)
+        return dict(job) if job else None
+
 
 def enqueue_recommendation_refresh(user_id: int, interest: str, topk: int = 3):
+    _set_refresh_job(user_id, {
+        "state": "running",
+        "saved_pairs": 0,
+        "papers": 0,
+        "message": "正在为您生成推荐",
+    })
+
     def _run_refresh():
         try:
             try:
@@ -100,14 +125,34 @@ def enqueue_recommendation_refresh(user_id: int, interest: str, topk: int = 3):
                     max_workers=3,
                     user_id=user_id,
                 )
+                saved_pairs = int(result.get("saved_pairs", 0) or 0)
+                papers = int(result.get("papers", 0) or 0)
                 logger.info(
-                    f"用户 {user_id} 手动刷新推荐完成: saved_pairs={result.get('saved_pairs', 0)}, "
+                    f"用户 {user_id} 手动刷新推荐完成: saved_pairs={saved_pairs}, "
                     f"cleaned={result.get('cleaned', 0)}"
                 )
+                _set_refresh_job(user_id, {
+                    "state": "completed",
+                    "saved_pairs": saved_pairs,
+                    "papers": papers,
+                    "message": "目前没有论文可更新" if saved_pairs == 0 else "推荐刷新完成",
+                })
             else:
                 logger.warning(f"用户 {user_id} 手动刷新推荐失败: embedding 未更新")
+                _set_refresh_job(user_id, {
+                    "state": "failed",
+                    "saved_pairs": 0,
+                    "papers": 0,
+                    "message": "兴趣向量更新失败，未能刷新推荐",
+                })
         except Exception as e:
             logger.error(f"用户 {user_id} 手动刷新推荐失败: {str(e)}", exc_info=True)
+            _set_refresh_job(user_id, {
+                "state": "failed",
+                "saved_pairs": 0,
+                "papers": 0,
+                "message": f"刷新推荐失败: {str(e)}",
+            })
 
     thread = threading.Thread(target=_run_refresh, daemon=True)
     thread.start()
@@ -240,6 +285,61 @@ class RefreshRecommendations(Resource):
             logger.error(f"刷新推荐失败: {str(e)}", exc_info=True)
             return {
                 'message': f'刷新推荐失败: {str(e)}',
+                'status': 'error',
+                'timestamp': datetime.now().isoformat(),
+                'data': None
+            }, 500
+
+
+@recommendation_ns.route('/refresh/status')
+class RefreshRecommendationsStatus(Resource):
+    @recommendation_ns.doc('refresh_recommendations_status')
+    @recommendation_ns.marshal_with(recommend_response_model)
+    def get(self):
+        try:
+            user_id = request.args.get('user_id')
+            try:
+                user_id = int(user_id)
+                if user_id <= 0:
+                    raise ValueError()
+            except Exception:
+                return {
+                    'message': '参数错误：user_id 必须是正整数',
+                    'status': 'error',
+                    'timestamp': datetime.now().isoformat(),
+                    'data': None
+                }, 400
+
+            job = get_refresh_job(user_id)
+            if not job:
+                return {
+                    'message': '暂无刷新任务',
+                    'status': 'success',
+                    'timestamp': datetime.now().isoformat(),
+                    'data': {
+                        'user_id': user_id,
+                        'state': 'idle',
+                        'saved_pairs': 0,
+                        'papers': 0,
+                    }
+                }
+
+            return {
+                'message': job.get('message') or 'ok',
+                'status': 'success',
+                'timestamp': datetime.now().isoformat(),
+                'data': {
+                    'user_id': user_id,
+                    'state': job.get('state'),
+                    'saved_pairs': job.get('saved_pairs', 0),
+                    'papers': job.get('papers', 0),
+                    'updated_at': job.get('updated_at'),
+                }
+            }
+        except Exception as e:
+            logger.error(f"获取刷新状态失败: {str(e)}", exc_info=True)
+            return {
+                'message': f'获取刷新状态失败: {str(e)}',
                 'status': 'error',
                 'timestamp': datetime.now().isoformat(),
                 'data': None

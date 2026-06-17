@@ -184,6 +184,17 @@ const Explore = ({ isLoggedIn }) => {
     showToast('任务已完成：已换一批推荐')
   }
 
+  const fetchRefreshStatus = async (uid) => {
+    const params = new URLSearchParams()
+    params.append('user_id', uid)
+    const resp = await fetch(`http://localhost:3001/recommendationOrchestrator/refresh/status?${params.toString()}`)
+    const data = await resp.json()
+    if (resp.ok && data.status === 'success' && data.data) {
+      return data.data
+    }
+    return null
+  }
+
   const refreshRecommendations = async () => {
     if (!userId) {
       showToast('请先登录后再刷新推荐', 'error')
@@ -213,6 +224,17 @@ const Explore = ({ isLoggedIn }) => {
           await new Promise(resolve => setTimeout(resolve, 2000))
         }
 
+        const jobStatus = await fetchRefreshStatus(userId)
+        if (jobStatus?.state === 'failed') {
+          showToast(jobStatus.message || '刷新推荐失败，请稍后重试', 'error')
+          return
+        }
+
+        if (jobStatus?.state === 'completed' && (jobStatus.saved_pairs ?? 0) === 0) {
+          showToast('目前没有论文可更新', 'error')
+          return
+        }
+
         const params = new URLSearchParams()
         params.append('limit', '20')
         params.append('user_id', userId)
@@ -227,9 +249,22 @@ const Explore = ({ isLoggedIn }) => {
           })
           if (hasFresh) {
             applyRecommendationBatch(recommendations.map(mapRecommendation))
+            showToast('任务已完成：推荐已更新')
+            return
+          }
+
+          if (jobStatus?.state === 'completed' && (jobStatus.saved_pairs ?? 0) > 0) {
+            applyRecommendationBatch(recommendations.map(mapRecommendation))
+            showToast('任务已完成：推荐已更新')
             return
           }
         }
+      }
+
+      const jobStatus = await fetchRefreshStatus(userId)
+      if (jobStatus?.state === 'completed' && (jobStatus.saved_pairs ?? 0) === 0) {
+        showToast('目前没有论文可更新', 'error')
+        return
       }
 
       const params = new URLSearchParams()
@@ -239,8 +274,6 @@ const Explore = ({ isLoggedIn }) => {
       const listData = await listResponse.json()
       if (listResponse.ok && listData.status === 'success' && listData.data?.recommendations) {
         applyRecommendationBatch(listData.data.recommendations.map(mapRecommendation))
-      } else {
-        applyRecommendationBatch([])
       }
     } catch (err) {
       console.error('刷新推荐失败:', err)
@@ -564,6 +597,7 @@ const Explore = ({ isLoggedIn }) => {
   if (loading) {
     return (
       <div className="explore-container explore-loading-container">
+        <Toast message={toast.message} type={toast.type} onClose={() => setToast({ message: '', type: 'success' })} />
         <LoadingState />
       </div>
     )
