@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import Toast from '../components/Toast'
 import './Explore.css'
+import { API_BASE } from '../config'
 
 const truncate = (text = '', len = 120) => {
   if (!text) return ''
@@ -109,7 +110,7 @@ const Explore = ({ isLoggedIn }) => {
       params.append('limit', uid ? '20' : '9')
       if (uid) params.append('user_id', uid)
 
-      const response = await fetch(`http://localhost:3001/recommendationOrchestrator/list?${params.toString()}`)
+      const response = await fetch(`${API_BASE}/recommendationOrchestrator/list?${params.toString()}`)
       const data = await response.json()
 
       if (response.ok && data.status === 'success' && data.data?.recommendations) {
@@ -152,7 +153,7 @@ const Explore = ({ isLoggedIn }) => {
       const params = new URLSearchParams()
       params.append('query', query.trim())
       params.append('topk', '5')
-      const resp = await fetch(`http://localhost:3001/recommendationOrchestrator/search?${params.toString()}`)
+      const resp = await fetch(`${API_BASE}/recommendationOrchestrator/search?${params.toString()}`)
       const data = await resp.json()
       setRecommendationPool([])
       setBatchIndex(0)
@@ -559,7 +560,7 @@ const Explore = ({ isLoggedIn }) => {
       return
     }
     try {
-      const resp = await fetch('http://localhost:3001/recommendationOrchestrator/like', {
+      const resp = await fetch(`${API_BASE}/recommendationOrchestrator/like`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

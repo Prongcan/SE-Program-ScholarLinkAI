@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import './Chat.css'
+import { API_BASE } from '../config'
 
 const suggestions = [
   '请总结一下这篇论文的主要贡献',
@@ -36,7 +37,7 @@ const Chat = () => {
   const loadChatHistory = async () => {
     try {
       setIsLoadingHistory(true)
-      const response = await fetch(`http://localhost:3001/chat/history/${recommendationId}`)
+      const response = await fetch(`${API_BASE}/chat/history/${recommendationId}`)
       const data = await response.json()
 
       if (data.status === 'success') {
@@ -71,7 +72,7 @@ const Chat = () => {
     setChatHistory(prev => [...prev, tempUserMessage])
 
     try {
-      const response = await fetch('http://localhost:3001/chat/send', {
+      const response = await fetch(`${API_BASE}/chat/send`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

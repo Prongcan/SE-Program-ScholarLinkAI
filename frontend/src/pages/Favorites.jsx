@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import Toast from '../components/Toast'
 import './Favorites.css'
+import { API_BASE } from '../config'
 
 const truncate = (text = '', len = 180) => {
   if (!text) return ''
@@ -298,7 +299,7 @@ const Favorites = ({ isLoggedIn }) => {
     const fetchFavs = async () => {
       setLoading(true)
       try {
-        const resp = await fetch(`http://localhost:3001/recommendationOrchestrator/favorites?user_id=${uid}&limit=50`)
+        const resp = await fetch(`${API_BASE}/recommendationOrchestrator/favorites?user_id=${uid}&limit=50`)
         const data = await resp.json()
         if (resp.ok && data.status === 'success' && data.data?.favorites) {
           const list = data.data.favorites.map((r, idx) => ({
@@ -354,7 +355,7 @@ const Favorites = ({ isLoggedIn }) => {
       return
     }
     try {
-      const resp = await fetch('http://localhost:3001/recommendationOrchestrator/like', {
+      const resp = await fetch(`${API_BASE}/recommendationOrchestrator/like`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

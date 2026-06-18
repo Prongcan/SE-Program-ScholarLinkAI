@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import './Login.css'
+import { API_BASE } from '../config'
 
 const Login = ({ onLogin }) => {
   const [formData, setFormData] = useState({
@@ -25,7 +26,7 @@ const Login = ({ onLogin }) => {
     setError('')
 
     try {
-      const response = await fetch('http://localhost:3001/users/login', {
+      const response = await fetch(`${API_BASE}/users/login`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
